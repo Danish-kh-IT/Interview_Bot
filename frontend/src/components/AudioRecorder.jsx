@@ -1,0 +1,478 @@
+import { useEffect, useRef, useCallback, useState } from "react";
+import { encodeWav, mergeFloat32 } from "../utils/wavEncoder";
+import { isLikelySpeech } from "../utils/audioAnalysis";
+
+const SAMPLE_RATE = 16000;
+const SILENCE_THRESHOLD = 14;
+const SILENCE_DURATION_MS = 1200; // 1.2 seconds pause tolerance for thinking (quicker turn-taking)
+const MIN_SPEECH_MS = 1200; // must speak at least ~1.2s before auto-stop
+
+/* ── Mic Icon SVG ── */
+function MicIcon({ size = 22 }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="currentColor">
+      <path d="M12 14a3 3 0 0 0 3-3V5a3 3 0 1 0-6 0v6a3 3 0 0 0 3 3zm5-3a5 5 0 0 1-10 0H5a7 7 0 0 0 6 6.93V20H9v2h6v-2h-2v-2.07A7 7 0 0 0 19 11h-2z" />
+    </svg>
+  );
+}
+
+/* ── Stop Icon SVG ── */
+function StopIcon({ size = 16 }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="currentColor">
+      <rect x="5" y="5" width="14" height="14" rx="2" />
+    </svg>
+  );
+}
+
+/* ── Ripple animation ring ── */
+function RippleRing({ color = "rgba(239,68,68,0.5)" }) {
+  return (
+    <>
+      {[1, 2].map((n) => (
+        <div
+          key={n}
+          style={{
+            position: "absolute",
+            inset: -(n * 8),
+            borderRadius: "50%",
+            border: `1px solid ${color}`,
+            animation: `pulseRing ${1.4 + n * 0.3}s ease-out infinite`,
+            animationDelay: `${n * 0.3}s`,
+          }}
+        />
+      ))}
+    </>
+  );
+}
+
+/* ── Voice Volume Visualizer ── */
+function VoiceVisualizer({ volume }) {
+  // volume is expected to be 0 to ~100
+  const normalized = Math.min(Math.max(volume / 50, 0.1), 1);
+  return (
+    <div
+      style={{
+        display: "flex",
+        gap: 4,
+        alignItems: "center",
+        height: 40,
+        padding: "0 10px",
+      }}
+    >
+      {[0.4, 0.8, 1, 0.8, 0.4].map((scale, i) => (
+        <div
+          key={i}
+          style={{
+            width: 6,
+            height: Math.max(8, 36 * normalized * scale),
+            background: "linear-gradient(180deg, #ef4444, #dc2626)",
+            borderRadius: 3,
+            transition: "height 0.1s ease",
+          }}
+        />
+      ))}
+    </div>
+  );
+}
+
+export default function AudioRecorder({
+  onRecordingComplete,
+  onNoVoice,
+  isProcessing,
+  recordingTrigger,
+  onLiveText,
+  onStopRef,
+}) {
+  const [isRecording, setIsRecording] = useState(false);
+  const [volume, setVolume] = useState(0);
+  const onLiveTextRef = useRef(onLiveText);
+
+  const pcmChunksRef = useRef([]);
+  const sampleRateRef = useRef(SAMPLE_RATE);
+  const processorRef = useRef(null);
+  const streamRef = useRef(null);
+  const audioCtxRef = useRef(null);
+  const silenceTimerRef = useRef(null);
+  const animFrameRef = useRef(null);
+  const isRecordingRef = useRef(false);
+  const hasSpokenRef = useRef(false);
+  const speechMsRef = useRef(0);
+  const onDoneRef = useRef(onRecordingComplete);
+  const onNoVoiceRef = useRef(onNoVoice);
+  const stopRef = useRef(null);
+  const recognitionRef = useRef(null);
+
+  useEffect(() => {
+    onDoneRef.current = onRecordingComplete;
+  }, [onRecordingComplete]);
+  useEffect(() => {
+    onNoVoiceRef.current = onNoVoice;
+  }, [onNoVoice]);
+  useEffect(() => {
+    onLiveTextRef.current = onLiveText;
+  }, [onLiveText]);
+
+  const finalizeRecording = useCallback(() => {
+    const processor = processorRef.current;
+    if (processor) {
+      try {
+        processor.onaudioprocess = null;
+        processor.disconnect();
+      } catch (_) {}
+      processorRef.current = null;
+    }
+
+    const samples = mergeFloat32(pcmChunksRef.current);
+    pcmChunksRef.current = [];
+
+    if (samples.length < sampleRateRef.current * 0.8) {
+      console.log("[AudioRecorder] Recording too short");
+      onNoVoiceRef.current?.();
+      return;
+    }
+
+    if (speechMsRef.current < MIN_SPEECH_MS) {
+      console.log(
+        "[AudioRecorder] Not enough speech (ms=",
+        speechMsRef.current,
+        ")",
+      );
+      onNoVoiceRef.current?.();
+      return;
+    }
+
+    if (!isLikelySpeech(samples, sampleRateRef.current)) {
+      console.log("[AudioRecorder] Audio failed speech quality check");
+      onNoVoiceRef.current?.();
+      return;
+    }
+
+    const blob = encodeWav(samples, sampleRateRef.current);
+    console.log(
+      "[AudioRecorder] WAV blob:",
+      blob.size,
+      "bytes, type:",
+      blob.type,
+    );
+    onDoneRef.current?.(blob);
+  }, []);
+
+  /* ── stopRecording ── */
+  const stopRecording = useCallback(() => {
+    if (!isRecordingRef.current) return;
+    isRecordingRef.current = false;
+    setIsRecording(false);
+    setVolume(0);
+    onLiveTextRef.current?.("");
+    cancelAnimationFrame(animFrameRef.current);
+    clearTimeout(silenceTimerRef.current);
+    silenceTimerRef.current = null;
+    try {
+      recognitionRef.current?.stop();
+    } catch (_) {}
+    recognitionRef.current = null;
+    finalizeRecording();
+    audioCtxRef.current?.close().catch(() => {});
+    audioCtxRef.current = null;
+    streamRef.current?.getTracks().forEach((t) => t.stop());
+  }, [finalizeRecording]);
+
+  useEffect(() => {
+    stopRef.current = stopRecording;
+  }, [stopRecording]);
+  // Expose stop function to parent via ref callback
+  useEffect(() => {
+    if (onStopRef) onStopRef.current = stopRecording;
+  }, [onStopRef, stopRecording]);
+
+  /* ── Silence detection (shared AudioContext) ── */
+  const startSilenceDetection = useCallback((analyser) => {
+    try {
+      const data = new Uint8Array(analyser.fftSize);
+      hasSpokenRef.current = false;
+      speechMsRef.current = 0;
+      const check = () => {
+        if (!isRecordingRef.current) return;
+        analyser.getByteTimeDomainData(data);
+        let sumSq = 0;
+        for (let i = 0; i < data.length; i++) {
+          const v = (data[i] - 128) / 128;
+          sumSq += v * v;
+        }
+        const rms = Math.sqrt(sumSq / data.length) * 100;
+        setVolume(rms);
+        if (rms > SILENCE_THRESHOLD) {
+          hasSpokenRef.current = true;
+          speechMsRef.current += 16;
+          clearTimeout(silenceTimerRef.current);
+          silenceTimerRef.current = null;
+        } else if (
+          hasSpokenRef.current &&
+          speechMsRef.current >= MIN_SPEECH_MS &&
+          !silenceTimerRef.current
+        ) {
+          silenceTimerRef.current = setTimeout(() => {
+            if (isRecordingRef.current) stopRef.current?.();
+          }, SILENCE_DURATION_MS);
+        }
+        animFrameRef.current = requestAnimationFrame(check);
+      };
+      animFrameRef.current = requestAnimationFrame(check);
+    } catch (e) {
+      console.warn("Silence detection unavailable:", e);
+    }
+  }, []);
+
+  /* ── Live speech-to-text ── */
+  const startLiveTranscription = useCallback(() => {
+    const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+    if (!SR) return;
+    const recognition = new SR();
+    recognition.continuous = true;
+    recognition.interimResults = true;
+    recognition.lang = "en-US";
+    recognitionRef.current = recognition;
+    let finalText = "";
+    recognition.onresult = (e) => {
+      let interim = "";
+      for (let i = e.resultIndex; i < e.results.length; i++) {
+        const t = e.results[i][0].transcript;
+        if (e.results[i].isFinal) finalText += t + " ";
+        else interim = t;
+      }
+      onLiveTextRef.current?.((finalText + interim).trim());
+    };
+    recognition.onerror = (e) => {
+      if (e.error !== "no-speech") console.warn("SR error:", e.error);
+    };
+    try {
+      recognition.start();
+    } catch (_) {}
+  }, []);
+
+  /* ── startRecording ── */
+  const startRecording = useCallback(async () => {
+    if (isRecordingRef.current) return;
+    hasSpokenRef.current = false;
+    speechMsRef.current = 0;
+    onLiveTextRef.current?.("");
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({
+        audio: {
+          echoCancellation: true,
+          noiseSuppression: true,
+          autoGainControl: true,
+        },
+      });
+      streamRef.current = stream;
+
+      // Record as 16 kHz mono WAV (Groq Whisper accepts this reliably)
+      const ctx = new AudioContext({ sampleRate: SAMPLE_RATE });
+      audioCtxRef.current = ctx;
+      if (ctx.state === "suspended") await ctx.resume();
+      sampleRateRef.current = ctx.sampleRate;
+      const source = ctx.createMediaStreamSource(stream);
+
+      const analyser = ctx.createAnalyser();
+      analyser.fftSize = 512;
+      source.connect(analyser);
+
+      pcmChunksRef.current = [];
+      const processor = ctx.createScriptProcessor(4096, 1, 1);
+      processorRef.current = processor;
+      processor.onaudioprocess = (e) => {
+        if (!isRecordingRef.current) return;
+        pcmChunksRef.current.push(
+          new Float32Array(e.inputBuffer.getChannelData(0)),
+        );
+      };
+      source.connect(processor);
+      processor.connect(ctx.destination);
+
+      isRecordingRef.current = true;
+      setIsRecording(true);
+      startSilenceDetection(analyser);
+      startLiveTranscription();
+    } catch (err) {
+      console.error("Mic error:", err);
+      alert("Microphone access is required for the interview.");
+    }
+  }, [startSilenceDetection, startLiveTranscription]);
+
+  useEffect(() => {
+    if (recordingTrigger > 0 && !isProcessing) startRecording();
+  }, [recordingTrigger]); // eslint-disable-line
+
+  useEffect(() => {
+    return () => {
+      cancelAnimationFrame(animFrameRef.current);
+      clearTimeout(silenceTimerRef.current);
+      try {
+        recognitionRef.current?.stop();
+      } catch (_) {}
+      if (isRecordingRef.current) {
+        isRecordingRef.current = false;
+        finalizeRecording();
+      }
+      audioCtxRef.current?.close().catch(() => {});
+      streamRef.current?.getTracks().forEach((t) => t.stop());
+    };
+  }, []);
+
+  /* ── RENDER ── */
+  return (
+    <div
+      style={{
+        display: "flex",
+        flexDirection: "column",
+        alignItems: "center",
+        gap: 10,
+      }}
+    >
+      {isProcessing ? (
+        /* Processing state */
+        <div
+          style={{
+            display: "flex",
+            flexDirection: "column",
+            alignItems: "center",
+            gap: 8,
+          }}
+        >
+          <div
+            style={{
+              width: 56,
+              height: 56,
+              borderRadius: "50%",
+              background: "rgba(255,255,255,0.04)",
+              border: "2px solid var(--border-light)",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+            }}
+          >
+            <div
+              style={{
+                width: 22,
+                height: 22,
+                borderRadius: "50%",
+                border: "2.5px solid rgba(99,102,241,0.25)",
+                borderTopColor: "#6366f1",
+              }}
+              className="animate-spin"
+            />
+          </div>
+          <p
+            style={{
+              fontSize: "0.75rem",
+              color: "var(--text-muted)",
+              fontWeight: 500,
+            }}
+          >
+            Evaluating…
+          </p>
+        </div>
+      ) : isRecording ? (
+        /* Recording state */
+        <div
+          style={{
+            display: "flex",
+            flexDirection: "column",
+            alignItems: "center",
+            gap: 10,
+          }}
+        >
+          <div style={{ display: "flex", alignItems: "center", gap: 16 }}>
+            <VoiceVisualizer volume={volume} />
+            <button
+              onClick={stopRecording}
+              style={{
+                position: "relative",
+                zIndex: 1,
+                width: 50,
+                height: 50,
+                borderRadius: "50%",
+                background: "linear-gradient(135deg, #ef4444, #dc2626)",
+                border: "none",
+                cursor: "pointer",
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                color: "#fff",
+                boxShadow: "0 6px 24px rgba(239,68,68,0.45)",
+                transition:
+                  "transform var(--ease-bounce), box-shadow var(--ease-normal)",
+              }}
+              onMouseEnter={(e) => {
+                e.currentTarget.style.transform = "scale(1.06)";
+              }}
+              onMouseLeave={(e) => {
+                e.currentTarget.style.transform = "scale(1)";
+              }}
+            >
+              <StopIcon size={16} />
+            </button>
+            <VoiceVisualizer volume={volume} />
+          </div>
+          <p
+            style={{ fontSize: "0.75rem", color: "#f87171", fontWeight: 600 }}
+            className="animate-pulse"
+          >
+            🎙 Listening…
+          </p>
+        </div>
+      ) : (
+        /* Idle state */
+        <div
+          style={{
+            display: "flex",
+            flexDirection: "column",
+            alignItems: "center",
+            gap: 10,
+          }}
+        >
+          <button
+            onClick={startRecording}
+            style={{
+              width: 60,
+              height: 60,
+              borderRadius: "50%",
+              background: "linear-gradient(135deg, #6366f1, #8b5cf6)",
+              border: "none",
+              cursor: "pointer",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              color: "#fff",
+              boxShadow: "0 6px 24px rgba(99,102,241,0.40)",
+              transition:
+                "transform var(--ease-bounce), box-shadow var(--ease-normal)",
+            }}
+            onMouseEnter={(e) => {
+              e.currentTarget.style.transform = "scale(1.06)";
+              e.currentTarget.style.boxShadow =
+                "0 10px 32px rgba(99,102,241,0.55)";
+            }}
+            onMouseLeave={(e) => {
+              e.currentTarget.style.transform = "scale(1)";
+              e.currentTarget.style.boxShadow =
+                "0 6px 24px rgba(99,102,241,0.40)";
+            }}
+          >
+            <MicIcon size={24} />
+          </button>
+          <p
+            style={{
+              fontSize: "0.75rem",
+              color: "var(--text-muted)",
+              fontWeight: 500,
+            }}
+          >
+            Tap to speak
+          </p>
+        </div>
+      )}
+    </div>
+  );
+}
