@@ -133,28 +133,32 @@ function QuestionCard({ q, i, expanded, onToggle }) {
             <p style={{ color: '#cbd5e1', fontSize: '0.875rem', lineHeight: 1.7 }}>{q.feedback}</p>
           </div>
           {(q.strengths?.length > 0 || q.weaknesses?.length > 0) && (
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
-              {q.strengths?.length > 0 && (
-                <div style={{ background: 'rgba(16,185,129,0.08)', borderRadius: 'var(--radius-md)', padding: '14px', border: '1px solid rgba(16,185,129,0.18)' }}>
-                  <p style={{ fontSize: '0.72rem', color: '#6ee7b7', textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: 8, fontWeight: 700 }}>✅ Strengths</p>
-                  <ul style={{ listStyle: 'none', display: 'flex', flexDirection: 'column', gap: 6 }}>
-                    {q.strengths.map((s, idx) => (
-                      <li key={idx} style={{ display: 'flex', gap: 8, fontSize: '0.8rem', color: 'rgba(110,231,183,0.85)', lineHeight: 1.5 }}><span style={{ flexShrink: 0, marginTop: 3 }}>•</span>{s}</li>
-                    ))}
-                  </ul>
+            (() => {
+              const rawStr = (q.strengths || []).filter(Boolean);
+              const rawWk  = (q.weaknesses || []).filter(Boolean);
+              const displayStr = rawStr.length > 0 ? rawStr : ['No specific strengths identified.'];
+              const displayWk  = rawWk.length > 0 ? rawWk : ['No specific areas to improve.'];
+              return (
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+                  <div style={{ background: 'rgba(16,185,129,0.08)', borderRadius: 'var(--radius-md)', padding: '14px', border: '1px solid rgba(16,185,129,0.18)' }}>
+                    <p style={{ fontSize: '0.72rem', color: '#6ee7b7', textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: 8, fontWeight: 700 }}>✅ Strengths</p>
+                    <ul style={{ listStyle: 'none', display: 'flex', flexDirection: 'column', gap: 6 }}>
+                      {displayStr.map((s, idx) => (
+                        <li key={idx} style={{ display: 'flex', gap: 8, fontSize: '0.8rem', color: 'rgba(110,231,183,0.85)', lineHeight: 1.5 }}><span style={{ flexShrink: 0, marginTop: 3 }}>•</span>{s}</li>
+                      ))}
+                    </ul>
+                  </div>
+                  <div style={{ background: 'rgba(239,68,68,0.08)', borderRadius: 'var(--radius-md)', padding: '14px', border: '1px solid rgba(239,68,68,0.18)' }}>
+                    <p style={{ fontSize: '0.72rem', color: '#fca5a5', textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: 8, fontWeight: 700 }}>⚠ To Improve</p>
+                    <ul style={{ listStyle: 'none', display: 'flex', flexDirection: 'column', gap: 6 }}>
+                      {displayWk.map((w, idx) => (
+                        <li key={idx} style={{ display: 'flex', gap: 8, fontSize: '0.8rem', color: 'rgba(252,165,165,0.85)', lineHeight: 1.5 }}><span style={{ flexShrink: 0, marginTop: 3 }}>•</span>{w}</li>
+                      ))}
+                    </ul>
+                  </div>
                 </div>
-              )}
-              {q.weaknesses?.length > 0 && (
-                <div style={{ background: 'rgba(239,68,68,0.08)', borderRadius: 'var(--radius-md)', padding: '14px', border: '1px solid rgba(239,68,68,0.18)' }}>
-                  <p style={{ fontSize: '0.72rem', color: '#fca5a5', textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: 8, fontWeight: 700 }}>⚠ To Improve</p>
-                  <ul style={{ listStyle: 'none', display: 'flex', flexDirection: 'column', gap: 6 }}>
-                    {q.weaknesses.map((w, idx) => (
-                      <li key={idx} style={{ display: 'flex', gap: 8, fontSize: '0.8rem', color: 'rgba(252,165,165,0.85)', lineHeight: 1.5 }}><span style={{ flexShrink: 0, marginTop: 3 }}>•</span>{w}</li>
-                    ))}
-                  </ul>
-                </div>
-              )}
-            </div>
+              );
+            })()
           )}
         </div>
       )}
@@ -320,25 +324,29 @@ function generatePDF(report, sessionData) {
       const aLines = spl(q.answer   || '(no answer recorded)',   contentW - 16, 9);
       const fLines = spl(q.feedback || 'No feedback provided.',  contentW - 16, 9);
 
-      const strItems = (q.strengths  || []).filter(Boolean);
-      const wkItems  = (q.weaknesses || []).filter(Boolean);
+      const rawStr = (q.strengths  || []).filter(Boolean);
+      const rawWk  = (q.weaknesses || []).filter(Boolean);
+      const hasSW  = rawStr.length > 0 || rawWk.length > 0;
+      
+      const strItems = hasSW ? (rawStr.length > 0 ? rawStr : ['No specific strengths identified.']) : [];
+      const wkItems  = hasSW ? (rawWk.length > 0 ? rawWk : ['No specific areas to improve.']) : [];
+
       const colW     = (contentW - 12) / 2;
       const strLines = strItems.flatMap(s => spl(`• ${s}`, colW - 6, 8.5));
       const wkLines  = wkItems.flatMap( w => spl(`• ${w}`, colW - 6, 8.5));
-      const hasSW    = strItems.length > 0 || wkItems.length > 0;
 
       const LH  = 5;
       const qH  = qLines.length * LH;
       const aH  = aLines.length * LH;
       const fH  = fLines.length * LH;
-      const swH = hasSW ? Math.max(strLines.length, wkLines.length) * LH + 14 : 0;
-
-      const cardH = 14           // header strip
-        + 4 + qH                 // question
-        + 7 + 4 + aH             // divider + answer
-        + 7 + 4 + fH             // divider + feedback
-        + (hasSW ? 7 + swH : 0) // divider + SW boxes
-        + 6;                     // bottom pad
+      
+      let requiredH = 53 + qH + aH + fH;
+      if (hasSW) {
+        const boxH = Math.max(strLines.length, wkLines.length) * LH + 12;
+        requiredH += 5 + boxH;
+      }
+      requiredH += 6; // bottom pad
+      const cardH = requiredH;
 
       /* page break */
       if (y + cardH > SAFE_H) {
@@ -436,38 +444,36 @@ function generatePDF(report, sessionData) {
         doc.line(margin + 3, cy, margin + contentW - 3, cy);
         cy += 5;
 
-        if (strItems.length > 0) {
-          const shH = strLines.length * LH + 12;
-          doc.setFillColor(...GRN_BG);
-          doc.setDrawColor(134, 239, 172);
-          doc.setLineWidth(0.3);
-          doc.roundedRect(margin + 3, cy, colW - 2, shH, 2, 2, 'FD');
-          doc.setFont('helvetica', 'bold');
-          doc.setFontSize(7);
-          doc.setTextColor(...GREEN);
-          doc.text('STRENGTHS', margin + 7, cy + 5);
-          doc.setFont('helvetica', 'normal');
-          doc.setFontSize(8.5);
-          doc.setTextColor(21, 128, 61);
-          doc.text(strLines, margin + 7, cy + 11);
-        }
+        const boxH = Math.max(strLines.length, wkLines.length) * LH + 12;
 
-        if (wkItems.length > 0) {
-          const wkH = wkLines.length * LH + 12;
-          const wx  = margin + 3 + colW + 3;
-          doc.setFillColor(...RED_BG);
-          doc.setDrawColor(252, 165, 165);
-          doc.setLineWidth(0.3);
-          doc.roundedRect(wx, cy, colW - 2, wkH, 2, 2, 'FD');
-          doc.setFont('helvetica', 'bold');
-          doc.setFontSize(7);
-          doc.setTextColor(...RED_C);
-          doc.text('AREAS TO IMPROVE', wx + 4, cy + 5);
-          doc.setFont('helvetica', 'normal');
-          doc.setFontSize(8.5);
-          doc.setTextColor(153, 27, 27);
-          doc.text(wkLines, wx + 4, cy + 11);
-        }
+        // Draw Strengths
+        doc.setFillColor(...GRN_BG);
+        doc.setDrawColor(134, 239, 172);
+        doc.setLineWidth(0.3);
+        doc.roundedRect(margin + 3, cy, colW - 2, boxH, 2, 2, 'FD');
+        doc.setFont('helvetica', 'bold');
+        doc.setFontSize(7);
+        doc.setTextColor(...GREEN);
+        doc.text('STRENGTHS', margin + 7, cy + 5);
+        doc.setFont('helvetica', 'normal');
+        doc.setFontSize(8.5);
+        doc.setTextColor(21, 128, 61);
+        doc.text(strLines, margin + 7, cy + 11);
+
+        // Draw Weaknesses
+        const wx  = margin + 3 + colW + 3;
+        doc.setFillColor(...RED_BG);
+        doc.setDrawColor(252, 165, 165);
+        doc.setLineWidth(0.3);
+        doc.roundedRect(wx, cy, colW - 2, boxH, 2, 2, 'FD');
+        doc.setFont('helvetica', 'bold');
+        doc.setFontSize(7);
+        doc.setTextColor(...RED_C);
+        doc.text('AREAS TO IMPROVE', wx + 4, cy + 5);
+        doc.setFont('helvetica', 'normal');
+        doc.setFontSize(8.5);
+        doc.setTextColor(153, 27, 27);
+        doc.text(wkLines, wx + 4, cy + 11);
       }
 
       y += cardH + 4;
@@ -523,7 +529,7 @@ export default function Result({ sessionData }) {
       generatePDF(report, sessionData);
     } catch (err) {
       console.error('PDF generation failed:', err);
-      alert('PDF generate karne mein masla aaya. Please dobara try karein.');
+      alert(' Error in generating PDF. Please try again.');
     } finally {
       setTimeout(() => setDownloading(false), 1500);
     }

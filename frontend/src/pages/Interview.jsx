@@ -424,17 +424,8 @@ const READY_PHRASES = [
   "go ahead",
   "absolutely",
   "of course",
-  "haan",
-  "han",
-  "bilkul",
-  "tayyar",
-  "tayyar hoon",
-  "mein tayyar",
-  "chalein",
-  "ha",
-  "ji",
-  "ji haan",
-  "acha",
+  "i'm ready",
+  "i'm not ready",
 ];
 const NOT_READY_PHRASES = [
   "no",
@@ -442,10 +433,6 @@ const NOT_READY_PHRASES = [
   "wait",
   "not ready",
   "hold on",
-  "nahi",
-  "ruk jao",
-  "ek minute",
-  "ruko",
   "one minute",
   "just a minute",
 ];
@@ -457,17 +444,15 @@ const HEAR_ME_RESPONSES = [
   "i hear you",
   "yes i can",
   "can hear",
-  "haan",
-  "han",
-  "sun sakta",
-  "sun sakti",
-  "sunta hoon",
-  "sunti hoon",
+  "you are audible",
+  "i can hear you",
   "ok",
   "okay",
   "sure",
   "here",
   "present",
+  "i'm here",
+  "i'm present",
 ];
 
 /* Additional phrase sets for repeat/end flow */
@@ -478,27 +463,18 @@ const YES_PHRASES = [
   "sure",
   "ok",
   "okay",
-  "haan",
-  "han",
-  "ji",
-  "bilkul",
+  "go ahead",
   "of course",
   "please",
   "repeat",
-  "dobara",
 ];
 const NO_PHRASES = [
   "no",
   "nope",
-  "nahi",
-  "na",
-  "mat",
   "don't",
   "end",
   "stop",
   "finish",
-  "khatam",
-  "band",
 ];
 
 function matchesPhrases(transcript, phrases) {
@@ -601,7 +577,7 @@ export default function Interview({ sessionData, setSessionData }) {
   };
 
   const startConfirmListening = useCallback(
-    (onMatch, phraseSet = READY_PHRASES, onNoMatch = null) => {
+    (onMatch, phraseSet = READY_PHRASES, onNoMatch = null, noPhraseSet = NOT_READY_PHRASES) => {
       const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
       if (!SR) return;
       stopConfirmRecognition();
@@ -617,7 +593,7 @@ export default function Interview({ sessionData, setSessionData }) {
         if (matchesPhrases(transcript, phraseSet)) {
           stopConfirmRecognition();
           onMatch(transcript);
-        } else if (onNoMatch && matchesPhrases(transcript, NOT_READY_PHRASES)) {
+        } else if (onNoMatch && matchesPhrases(transcript, noPhraseSet)) {
           stopConfirmRecognition();
           onNoMatch(transcript);
         } else {
@@ -719,11 +695,7 @@ export default function Interview({ sessionData, setSessionData }) {
     stopConfirmRecognition();
     setFlowPhaseSync("confirm_end");
     const msg = "Would you like to end the interview?";
-    setChatHistory((prev) => [
-      ...prev,
-      { type: "bot", text: msg, isConfirmation: true },
-    ]);
-    setCurrentBotText(msg);
+    // Do not show confirmation messages in UI, just play voice
     speak(msg, () => {
       startConfirmListening(
         () => handleEndCallRef.current?.(),
@@ -738,20 +710,17 @@ export default function Interview({ sessionData, setSessionData }) {
     stopConfirmRecognition();
     setFlowPhaseSync("confirm_repeat");
     const msg =
-      "Would you like me to repeat the same question and record your answer again?";
-    setChatHistory((prev) => [
-      ...prev,
-      { type: "bot", text: msg, isConfirmation: true },
-    ]);
-    setCurrentBotText(msg);
+      "Would you like to repeat the question, or move to the next question?";
+    // Do not show confirmation messages in UI, just play voice
     speak(msg, () => {
       startConfirmListening(
         () => {
           isRetryRef.current = true;
           repeatCurrentQuestionRef.current?.();
         },
-        YES_PHRASES,
-        () => askEndInterviewRef.current?.(),
+        ["repeat", "repeat question", "same question", "again", "yes", "yeah", "sure", "repeat it"],
+        () => confirmAdvanceNextRef.current?.(),
+        ["next", "next question", "move on", "proceed", "skip", "forward", "next one"]
       );
     });
   }, [startConfirmListening]);
@@ -762,11 +731,7 @@ export default function Interview({ sessionData, setSessionData }) {
     setFlowPhaseSync("awaiting_next");
     const msg =
       "Thank you for your answer. Shall we move on to the next question?";
-    setChatHistory((prev) => [
-      ...prev,
-      { type: "bot", text: msg, isConfirmation: true },
-    ]);
-    setCurrentBotText(msg);
+    // Do not show confirmation messages in UI, just play voice
     speak(msg, () => {
       startConfirmListening(
         () => confirmAdvanceNextRef.current?.(),
@@ -783,6 +748,7 @@ export default function Interview({ sessionData, setSessionData }) {
     try {
       const data = await advanceQuestion(sessionData.session_id);
       if (data.completed) {
+        setFlowPhaseSync("ending");
         setIsProcessing(false);
         const endMsg =
           "Thank you for your time. Your interview is complete. Generating your performance report now.";
@@ -814,11 +780,7 @@ export default function Interview({ sessionData, setSessionData }) {
     setFlowPhaseSync("confirm_listening");
     const msg =
       "Are you still there? Can you hear me? Please say yes if you can hear me.";
-    setChatHistory((prev) => [
-      ...prev,
-      { type: "bot", text: msg, isSilenceCheck: true },
-    ]);
-    setCurrentBotText(msg);
+    // Do not show confirmation messages in UI, just play voice
     speak(msg, () => {
       startConfirmListening(
         () => repeatCurrentQuestionRef.current?.(),
@@ -832,7 +794,7 @@ export default function Interview({ sessionData, setSessionData }) {
     clearTimeout(silenceCheckRef.current);
     silenceCheckRef.current = setTimeout(() => {
       if (flowPhaseRef.current === "idle") askAreYouListening();
-    }, 7000); // shorter silence window so user doesn't wait too long
+    }, 15000); // wait 15 seconds before asking if they are still there
   }, [askAreYouListening]);
   scheduleSilenceCheckRef.current = scheduleSilenceCheck;
   repeatCurrentQuestionRef.current = repeatCurrentQuestion;
@@ -918,6 +880,7 @@ export default function Interview({ sessionData, setSessionData }) {
         }
 
         if (data.completed) {
+          setFlowPhaseSync("ending");
           setIsProcessing(false);
           const endMsg =
             "Thank you so much for your time today. Your interview is now complete. We have recorded all your responses and will generate your performance report shortly. Have a great day!";
@@ -954,7 +917,7 @@ export default function Interview({ sessionData, setSessionData }) {
           ...prev,
           {
             type: "bot",
-            text: `⚠️ Ek masla aa gaya (${errDetail}). Dobara koshish karein — mic button dabayein aur jawab dein.`,
+            text: `⚠️ Issue has occur (${errDetail}). Try again —press the mic button and give answer.`,
             isError: true,
           },
         ]);
@@ -1009,12 +972,14 @@ export default function Interview({ sessionData, setSessionData }) {
     clearTimeout(silenceCheckRef.current);
     stopConfirmRecognition();
     window.speechSynthesis?.cancel();
+    setFlowPhaseSync("ending");
     setIsProcessing(true);
     try {
       await endInterview(sessionData.session_id);
       navigate("/result");
     } catch (err) {
       console.error(err);
+      setFlowPhaseSync("idle");
       setIsProcessing(false);
     }
   }, [sessionData, navigate]);
