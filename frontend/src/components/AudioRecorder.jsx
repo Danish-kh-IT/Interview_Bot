@@ -4,7 +4,7 @@ import { isLikelySpeech } from "../utils/audioAnalysis";
 
 const SAMPLE_RATE = 16000;
 const SILENCE_THRESHOLD = 4;
-const SILENCE_DURATION_MS = 4000; // 4.0 seconds pause tolerance for thinking (allows natural pauses)
+const SILENCE_DURATION_MS = 3000; // 3.0 seconds pause tolerance for thinking
 const MIN_SPEECH_MS = 1200; // must speak at least ~1.2s before auto-stop
 
 /* ── Mic Icon SVG ── */
