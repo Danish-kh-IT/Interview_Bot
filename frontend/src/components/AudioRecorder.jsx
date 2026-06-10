@@ -99,6 +99,7 @@ export default function AudioRecorder({
   const hasSpokenRef = useRef(false);
   const speechMsRef = useRef(0);
   const lastLiveTextTimeRef = useRef(0);
+  const isSRActiveRef = useRef(false); // true while SR recognition is actively running
   const onDoneRef = useRef(onRecordingComplete);
   const onNoVoiceRef = useRef(onNoVoice);
   const onLiveTextRef = useRef(onLiveText);
@@ -168,6 +169,7 @@ export default function AudioRecorder({
     cancelAnimationFrame(animFrameRef.current);
     clearTimeout(silenceTimerRef.current);
     silenceTimerRef.current = null;
+    isSRActiveRef.current = false;
     try {
       recognitionRef.current?.stop();
     } catch (_) {}
@@ -225,9 +227,12 @@ export default function AudioRecorder({
         ) {
           silenceTimerRef.current = setTimeout(() => {
             silenceTimerRef.current = null;
+            // Guard: do not stop if SR is actively receiving transcript updates
+            const srActive = isSRActiveRef.current;
             const timeSinceLastText = performance.now() - (lastLiveTextTimeRef.current || 0);
-            if (timeSinceLastText < 2000) {
-              // SR is still actively emitting text — reschedule and wait longer
+            const srRecentlyActive = timeSinceLastText < 2000;
+            if (srActive || srRecentlyActive) {
+              // SR is still processing — reschedule with a shorter wait
               silenceTimerRef.current = setTimeout(() => {
                 silenceTimerRef.current = null;
                 if (isRecordingRef.current) stopRef.current?.();
@@ -255,8 +260,15 @@ export default function AudioRecorder({
     recognition.lang = "en-US";
     recognitionRef.current = recognition;
     let finalText = "";
+    recognition.onstart = () => { isSRActiveRef.current = true; };
+    recognition.onend = () => { isSRActiveRef.current = false; };
+    recognition.onerror = (e) => {
+      isSRActiveRef.current = false;
+      if (e.error !== "no-speech") console.warn("SR error:", e.error);
+    };
     recognition.onresult = (e) => {
       lastLiveTextTimeRef.current = performance.now();
+      isSRActiveRef.current = true; // still producing results
       let interim = "";
       for (let i = e.resultIndex; i < e.results.length; i++) {
         const t = e.results[i][0].transcript;
@@ -264,9 +276,6 @@ export default function AudioRecorder({
         else interim = t;
       }
       onLiveTextRef.current?.((finalText + interim).trim());
-    };
-    recognition.onerror = (e) => {
-      if (e.error !== "no-speech") console.warn("SR error:", e.error);
     };
     try {
       recognition.start();

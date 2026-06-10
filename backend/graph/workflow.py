@@ -21,7 +21,7 @@ def build_workflow():
     
     def check_completion(state: InterviewState):
         if state.get("interview_completed"):
-            return "generate_final_report"
+            return "generate_final_report" 
         return END
         
     workflow.add_conditional_edges(
