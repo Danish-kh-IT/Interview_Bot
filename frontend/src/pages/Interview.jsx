@@ -796,7 +796,7 @@ export default function Interview({ sessionData, setSessionData }) {
     if (liveText) return; // Safely skip if candidate is already speaking
     silenceCheckRef.current = setTimeout(() => {
       if (flowPhaseRef.current === "idle") askAreYouListening();
-    }, 15000); // wait 15 seconds before asking if they are still there
+    }, 25000); // wait 25 seconds before asking if they are still there
   }, [askAreYouListening, liveText]);
   scheduleSilenceCheckRef.current = scheduleSilenceCheck;
 
@@ -810,7 +810,7 @@ export default function Interview({ sessionData, setSessionData }) {
         if (flowPhaseRef.current === "idle") {
           askAreYouListening();
         }
-      }, 15000);
+      }, 25000);
     }
   }, [liveText, flowPhase]);
   repeatCurrentQuestionRef.current = repeatCurrentQuestion;
@@ -876,7 +876,8 @@ export default function Interview({ sessionData, setSessionData }) {
   const handleRecordingComplete = useCallback(
     async (audioBlob) => {
       // Cancel silence check — candidate spoke
-      clearTimeout(silenceCheckRef.current);
+      if (silenceCheckRef.current) clearTimeout(silenceCheckRef.current);
+      silenceCheckRef.current = null;
       stopConfirmRecognition();
       setFlowPhaseSync("idle");
 

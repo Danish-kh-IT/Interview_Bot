@@ -4,7 +4,7 @@ import { isLikelySpeech } from "../utils/audioAnalysis";
 
 const SAMPLE_RATE = 16000;
 const SILENCE_THRESHOLD = 4;
-const SILENCE_DURATION_MS = 3000; // 3.0 seconds pause tolerance for thinking
+const SILENCE_DURATION_MS = 5500; // 5.5 seconds pause tolerance for thinking
 const MIN_SPEECH_MS = 1200; // must speak at least ~1.2s before auto-stop
 
 /* ── Mic Icon SVG ── */
@@ -98,6 +98,7 @@ export default function AudioRecorder({
   const isRecordingRef = useRef(false);
   const hasSpokenRef = useRef(false);
   const speechMsRef = useRef(0);
+  const lastLiveTextTimeRef = useRef(0);
   const onDoneRef = useRef(onRecordingComplete);
   const onNoVoiceRef = useRef(onNoVoice);
   const onLiveTextRef = useRef(onLiveText);
@@ -223,6 +224,12 @@ export default function AudioRecorder({
           !silenceTimerRef.current
         ) {
           silenceTimerRef.current = setTimeout(() => {
+            const timeSinceLastText = performance.now() - (lastLiveTextTimeRef.current || 0);
+            if (timeSinceLastText < SILENCE_DURATION_MS) {
+              // Safety fallback: SR is still actively emitting text, do not stop
+              silenceTimerRef.current = null;
+              return;
+            }
             if (isRecordingRef.current) stopRef.current?.();
           }, SILENCE_DURATION_MS);
         }
@@ -245,6 +252,7 @@ export default function AudioRecorder({
     recognitionRef.current = recognition;
     let finalText = "";
     recognition.onresult = (e) => {
+      lastLiveTextTimeRef.current = performance.now();
       let interim = "";
       for (let i = e.resultIndex; i < e.results.length; i++) {
         const t = e.results[i][0].transcript;
