@@ -803,12 +803,16 @@ export default function Interview({ sessionData, setSessionData }) {
   /* ── Track live speech to push silence check forward ── */
   useEffect(() => {
     if (liveText && flowPhase === "idle") {
-      clearTimeout(silenceCheckRef.current);
+      if (silenceCheckRef.current) {
+        clearTimeout(silenceCheckRef.current);
+      }
       silenceCheckRef.current = setTimeout(() => {
-        if (flowPhaseRef.current === "idle") askAreYouListening();
+        if (flowPhaseRef.current === "idle") {
+          askAreYouListening();
+        }
       }, 15000);
     }
-  }, [liveText, flowPhase, askAreYouListening]);
+  }, [liveText, flowPhase]);
   repeatCurrentQuestionRef.current = repeatCurrentQuestion;
   askEndInterviewRef.current = askEndInterview;
   askRepeatQuestionRef.current = askRepeatQuestion;
