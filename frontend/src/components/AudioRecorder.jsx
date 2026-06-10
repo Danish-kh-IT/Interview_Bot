@@ -3,8 +3,8 @@ import { encodeWav, mergeFloat32 } from "../utils/wavEncoder";
 import { isLikelySpeech } from "../utils/audioAnalysis";
 
 const SAMPLE_RATE = 16000;
-const SILENCE_THRESHOLD = 14;
-const SILENCE_DURATION_MS = 1200; // 1.2 seconds pause tolerance for thinking (quicker turn-taking)
+const SILENCE_THRESHOLD = 4;
+const SILENCE_DURATION_MS = 4000; // 4.0 seconds pause tolerance for thinking (allows natural pauses)
 const MIN_SPEECH_MS = 1200; // must speak at least ~1.2s before auto-stop
 
 /* ── Mic Icon SVG ── */
@@ -83,10 +83,10 @@ export default function AudioRecorder({
   recordingTrigger,
   onLiveText,
   onStopRef,
+  onSpeechStart,
 }) {
   const [isRecording, setIsRecording] = useState(false);
   const [volume, setVolume] = useState(0);
-  const onLiveTextRef = useRef(onLiveText);
 
   const pcmChunksRef = useRef([]);
   const sampleRateRef = useRef(SAMPLE_RATE);
@@ -100,18 +100,17 @@ export default function AudioRecorder({
   const speechMsRef = useRef(0);
   const onDoneRef = useRef(onRecordingComplete);
   const onNoVoiceRef = useRef(onNoVoice);
+  const onLiveTextRef = useRef(onLiveText);
+  const onSpeechStartRef = useRef(onSpeechStart);
   const stopRef = useRef(null);
   const recognitionRef = useRef(null);
 
   useEffect(() => {
     onDoneRef.current = onRecordingComplete;
-  }, [onRecordingComplete]);
-  useEffect(() => {
     onNoVoiceRef.current = onNoVoice;
-  }, [onNoVoice]);
-  useEffect(() => {
     onLiveTextRef.current = onLiveText;
-  }, [onLiveText]);
+    onSpeechStartRef.current = onSpeechStart;
+  }, [onRecordingComplete, onNoVoice, onLiveText, onSpeechStart]);
 
   const finalizeRecording = useCallback(() => {
     const processor = processorRef.current;
@@ -192,8 +191,13 @@ export default function AudioRecorder({
       const data = new Uint8Array(analyser.fftSize);
       hasSpokenRef.current = false;
       speechMsRef.current = 0;
+      let lastTime = performance.now();
       const check = () => {
         if (!isRecordingRef.current) return;
+        const now = performance.now();
+        const delta = now - lastTime;
+        lastTime = now;
+
         analyser.getByteTimeDomainData(data);
         let sumSq = 0;
         for (let i = 0; i < data.length; i++) {
@@ -202,14 +206,20 @@ export default function AudioRecorder({
         }
         const rms = Math.sqrt(sumSq / data.length) * 100;
         setVolume(rms);
+        
+        if (hasSpokenRef.current) {
+          speechMsRef.current += delta;
+        }
+
         if (rms > SILENCE_THRESHOLD) {
-          hasSpokenRef.current = true;
-          speechMsRef.current += 16;
+          if (!hasSpokenRef.current) {
+            onSpeechStartRef.current?.();
+            hasSpokenRef.current = true;
+          }
           clearTimeout(silenceTimerRef.current);
           silenceTimerRef.current = null;
         } else if (
           hasSpokenRef.current &&
-          speechMsRef.current >= MIN_SPEECH_MS &&
           !silenceTimerRef.current
         ) {
           silenceTimerRef.current = setTimeout(() => {

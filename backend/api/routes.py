@@ -13,10 +13,11 @@ def _store_score(state: dict, score_entry: dict) -> None:
     """Store or replace score for the current question index."""
     scores = list(state.get("scores", []))
     idx = state.get("current_question_index", 0)
-    if idx < len(scores):
-        scores[idx] = score_entry
-    else:
-        scores.append(score_entry)
+    
+    while len(scores) <= idx:
+        scores.append({})
+        
+    scores[idx] = score_entry
     state["scores"] = scores
 
 
@@ -119,9 +120,13 @@ async def submit_answer(
     # 1.5. Check if candidate explicitly wants to end/leave
     lower_t = transcript.lower()
     leave_phrases = [
-        "end meeting", "end this meeting", "end the meeting",
-        "leave meeting", "stop interview", "quit", "leave the interview",
-        "i want to end", "stop the interview", "end interview"
+        "end meeting", "end this meeting", "end the meeting", "stop interview","stop the interview", 
+        "leave meeting","leave the meeting","i'm leaving the meeting", "i'm leaving the interview", 
+        "quit", "I'm quit this interview", "I have to quit this interview", "leave the interview",
+        "i want to end", "stop the interview", "end the interview","i want to end this meeting","i want to end this interview",
+        "i want to stop this interview", "i want to stop this meeting", "i want to stop the interview", "i want to stop the meeting",
+        "i don't want to continue", "i don't want to do this anymore", "i don't want to do this interview anymore",
+        "i don't want to continue with this interview", "i don't want to do this interview anymore",
     ]
     if any(p in lower_t for p in leave_phrases):
         scores = state.get("scores", [])

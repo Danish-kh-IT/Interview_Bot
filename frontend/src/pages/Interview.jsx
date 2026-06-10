@@ -743,6 +743,7 @@ export default function Interview({ sessionData, setSessionData }) {
 
   /* ── Step 3 YES: advance to next question via API ── */
   const confirmAdvanceNext = useCallback(async () => {
+    if (isProcessing) return;
     stopConfirmRecognition();
     setIsProcessing(true);
     try {
@@ -783,7 +784,7 @@ export default function Interview({ sessionData, setSessionData }) {
     // Do not show confirmation messages in UI, just play voice
     speak(msg, () => {
       startConfirmListening(
-        () => repeatCurrentQuestionRef.current?.(),
+        () => askRepeatQuestionRef.current?.(),
         HEAR_ME_RESPONSES,
       );
     });
@@ -792,11 +793,22 @@ export default function Interview({ sessionData, setSessionData }) {
   /* ── Long silence while waiting for answer ── */
   const scheduleSilenceCheck = useCallback(() => {
     clearTimeout(silenceCheckRef.current);
+    if (liveText) return; // Safely skip if candidate is already speaking
     silenceCheckRef.current = setTimeout(() => {
       if (flowPhaseRef.current === "idle") askAreYouListening();
     }, 15000); // wait 15 seconds before asking if they are still there
-  }, [askAreYouListening]);
+  }, [askAreYouListening, liveText]);
   scheduleSilenceCheckRef.current = scheduleSilenceCheck;
+
+  /* ── Track live speech to push silence check forward ── */
+  useEffect(() => {
+    if (liveText && flowPhase === "idle") {
+      clearTimeout(silenceCheckRef.current);
+      silenceCheckRef.current = setTimeout(() => {
+        if (flowPhaseRef.current === "idle") askAreYouListening();
+      }, 15000);
+    }
+  }, [liveText, flowPhase, askAreYouListening]);
   repeatCurrentQuestionRef.current = repeatCurrentQuestion;
   askEndInterviewRef.current = askEndInterview;
   askRepeatQuestionRef.current = askRepeatQuestion;
@@ -974,9 +986,21 @@ export default function Interview({ sessionData, setSessionData }) {
     window.speechSynthesis?.cancel();
     setFlowPhaseSync("ending");
     setIsProcessing(true);
+
     try {
-      await endInterview(sessionData.session_id);
-      navigate("/result");
+      const endPromise = endInterview(sessionData.session_id);
+      const endMsg = "Thank you so much for your time today. Your interview is now complete. Please wait while we generate your performance report.";
+      
+      speak(endMsg, async () => {
+        try {
+          await endPromise;
+          navigate("/result");
+        } catch (err) {
+          console.error(err);
+          setFlowPhaseSync("idle");
+          setIsProcessing(false);
+        }
+      });
     } catch (err) {
       console.error(err);
       setFlowPhaseSync("idle");
@@ -1440,6 +1464,7 @@ export default function Interview({ sessionData, setSessionData }) {
           <AudioRecorder
             onRecordingComplete={handleRecordingComplete}
             onNoVoice={handleNoVoiceDetected}
+            onSpeechStart={() => clearTimeout(silenceCheckRef.current)}
             isProcessing={isProcessing}
             recordingTrigger={recordingTrigger}
             onLiveText={setLiveText}

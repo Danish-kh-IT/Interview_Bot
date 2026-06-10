@@ -49,7 +49,11 @@ export default function AudioPlayer({ base64Audio, onEnded }) {
       setStatus('idle');
       if (onEndedRef.current) onEndedRef.current();
     };
-    audio.onerror = () => { console.error('Audio failed to load'); setStatus('error'); };
+    audio.onerror = () => {
+      if (currentAudio !== audio) return;
+      console.error('Audio failed to load');
+      setStatus('error');
+    };
     return () => {
       audio.pause();
       audio.src = '';
