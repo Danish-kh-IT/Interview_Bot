@@ -4,7 +4,7 @@ import { isLikelySpeech } from "../utils/audioAnalysis";
 
 const SAMPLE_RATE = 16000;
 const SILENCE_THRESHOLD = 4;
-const SILENCE_DURATION_MS = 5500; // 5.5 seconds pause tolerance for thinking
+const SILENCE_DURATION_MS = 5000; // 5.0 seconds pause tolerance for thinking
 const MIN_SPEECH_MS = 1200; // must speak at least ~1.2s before auto-stop
 
 /* ── Mic Icon SVG ── */
@@ -224,10 +224,14 @@ export default function AudioRecorder({
           !silenceTimerRef.current
         ) {
           silenceTimerRef.current = setTimeout(() => {
+            silenceTimerRef.current = null;
             const timeSinceLastText = performance.now() - (lastLiveTextTimeRef.current || 0);
-            if (timeSinceLastText < SILENCE_DURATION_MS) {
-              // Safety fallback: SR is still actively emitting text, do not stop
-              silenceTimerRef.current = null;
+            if (timeSinceLastText < 2000) {
+              // SR is still actively emitting text — reschedule and wait longer
+              silenceTimerRef.current = setTimeout(() => {
+                silenceTimerRef.current = null;
+                if (isRecordingRef.current) stopRef.current?.();
+              }, 2500);
               return;
             }
             if (isRecordingRef.current) stopRef.current?.();
