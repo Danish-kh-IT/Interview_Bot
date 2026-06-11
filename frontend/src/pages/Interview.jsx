@@ -415,7 +415,7 @@ const READY_PHRASES = [
   "yep",
   "sure",
   "ready",
-  "ok",
+  "okay next question please",
   "okay",
   "let's go",
   "continue",
@@ -426,6 +426,10 @@ const READY_PHRASES = [
   "of course",
   "i'm ready",
   "i'm not ready",
+  "next question",
+  "i want to move next question",
+  "definitely",
+  "definitely next question",
 ];
 const NOT_READY_PHRASES = [
   "no",
@@ -435,6 +439,26 @@ const NOT_READY_PHRASES = [
   "hold on",
   "one minute",
   "just a minute",
+  "i'm not ready",
+  // End interview commands
+  "end",
+  "stop",
+  "finish",
+  "done",
+  "end interview",
+  "stop interview",
+  "end the interview",
+  "stop the interview",
+  "finish the interview",
+  "i want to end",
+  "want to end",
+  "end it",
+  "that's all",
+  "thats all",
+  "i'm done",
+  "i am done",
+  "end the meeting",
+  "stop the meeting",
 ];
 const HEAR_ME_RESPONSES = [
   "yes",
@@ -511,6 +535,7 @@ export default function Interview({ sessionData, setSessionData }) {
   const confirmRecogRef = useRef(null); // SpeechRecognition for confirmation
   const pendingNextDataRef = useRef(null);
   const isRetryRef = useRef(false);
+  const noVoiceRetryCountRef = useRef(0); // track consecutive no-voice failures
   const flowPhaseRef = useRef("idle");
   const scheduleSilenceCheckRef = useRef(null);
   const handleEndCallRef = useRef(null);
@@ -652,7 +677,11 @@ export default function Interview({ sessionData, setSessionData }) {
       } else {
         setFlowPhaseSync("idle");
         if (!data?.audio_base64) {
-          setRecordingTrigger((p) => p + 1);
+          // No backend TTS — speak the question via browser TTS, then start recording
+          speak(data?.question_text || "", () => {
+            setRecordingTrigger((p) => p + 1);
+            scheduleSilenceCheckRef.current?.();
+          });
         }
       }
 
@@ -731,13 +760,15 @@ export default function Interview({ sessionData, setSessionData }) {
     setFlowPhaseSync("awaiting_next");
     const msg =
       "Thank you for your answer. Shall we move on to the next question?";
-    // Do not show confirmation messages in UI, just play voice
     speak(msg, () => {
-      startConfirmListening(
-        () => confirmAdvanceNextRef.current?.(),
-        READY_PHRASES,
-        () => askEndInterviewRef.current?.(),
-      );
+      // 500ms buffer after TTS ends to prevent echo capture by confirmation SR
+      setTimeout(() => {
+        startConfirmListening(
+          () => confirmAdvanceNextRef.current?.(),
+          READY_PHRASES,
+          () => askEndInterviewRef.current?.(),
+        );
+      }, 500);
     });
   }, [startConfirmListening]);
 
@@ -870,7 +901,20 @@ export default function Interview({ sessionData, setSessionData }) {
   /* ──────────────────────────────────────────────── */
   const handleNoVoiceDetected = useCallback(() => {
     if (flowPhaseRef.current !== "idle") return;
-    askAreYouListening();
+    noVoiceRetryCountRef.current += 1;
+    if (noVoiceRetryCountRef.current <= 2) {
+      // Silently retry recording first (up to 2 times)
+      console.log("[Interview] No voice — retrying recording silently (attempt", noVoiceRetryCountRef.current, ")");
+      setTimeout(() => {
+        if (flowPhaseRef.current === "idle") {
+          setRecordingTrigger((p) => p + 1);
+        }
+      }, 800);
+    } else {
+      // Only after multiple failures, ask if they can hear us
+      noVoiceRetryCountRef.current = 0;
+      askAreYouListening();
+    }
   }, [askAreYouListening]);
 
   const handleRecordingComplete = useCallback(
@@ -879,8 +923,8 @@ export default function Interview({ sessionData, setSessionData }) {
       if (silenceCheckRef.current) clearTimeout(silenceCheckRef.current);
       silenceCheckRef.current = null;
       stopConfirmRecognition();
+      // Keep flowPhase as 'idle' only for a clean start, but move to processing immediately
       setFlowPhaseSync("idle");
-
       setIsProcessing(true);
       try {
         const data = await submitAnswer(
@@ -892,7 +936,17 @@ export default function Interview({ sessionData, setSessionData }) {
 
         if (data.no_speech) {
           setIsProcessing(false);
-          askAreYouListening();
+          // Retry recording silently instead of immediately asking "can you hear me"
+          noVoiceRetryCountRef.current += 1;
+          if (noVoiceRetryCountRef.current <= 2) {
+            console.log("[Interview] Backend no_speech — retry", noVoiceRetryCountRef.current);
+            setTimeout(() => {
+              if (flowPhaseRef.current === "idle") setRecordingTrigger((p) => p + 1);
+            }, 800);
+          } else {
+            noVoiceRetryCountRef.current = 0;
+            askAreYouListening();
+          }
           return;
         }
 
@@ -912,15 +966,44 @@ export default function Interview({ sessionData, setSessionData }) {
 
         if (!candidateText) {
           setIsProcessing(false);
-          askAreYouListening();
+          // Empty transcript — retry silently instead of asking "can you hear me"
+          noVoiceRetryCountRef.current += 1;
+          if (noVoiceRetryCountRef.current <= 2) {
+            console.log("[Interview] Empty transcript — retry", noVoiceRetryCountRef.current);
+            setTimeout(() => {
+              if (flowPhaseRef.current === "idle") setRecordingTrigger((p) => p + 1);
+            }, 800);
+          } else {
+            noVoiceRetryCountRef.current = 0;
+            askAreYouListening();
+          }
           return;
         }
+        // Successful answer — reset retry counter
+        noVoiceRetryCountRef.current = 0;
+
+        // ── Check if the answer itself contains an end-interview command ──
+        const END_IN_ANSWER_PHRASES = [
+          "end the interview", "end interview", "stop the interview", "stop interview",
+          "finish the interview", "finish interview", "end the meeting", "stop the meeting",
+          "i want to end", "want to end", "i am done", "i'm done", "that's all",
+          "thats all", "end it now", "i want to stop",
+        ];
+        const lowerCandidate = candidateText.toLowerCase();
+        const wantsToEnd = END_IN_ANSWER_PHRASES.some((p) => lowerCandidate.includes(p));
 
         setChatHistory((prev) => [
           ...prev,
           { type: "user", text: candidateText },
         ]);
         setIsProcessing(false);
+
+        if (wantsToEnd) {
+          console.log("[Interview] End command detected in answer — triggering end interview flow");
+          askEndInterviewRef.current?.();
+          return;
+        }
+
         askMoveToNext();
       } catch (err) {
         // Log exact error for debugging

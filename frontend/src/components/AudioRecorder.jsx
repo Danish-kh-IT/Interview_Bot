@@ -3,9 +3,11 @@ import { encodeWav, mergeFloat32 } from "../utils/wavEncoder";
 import { isLikelySpeech } from "../utils/audioAnalysis";
 
 const SAMPLE_RATE = 16000;
-const SILENCE_THRESHOLD = 4;
-const SILENCE_DURATION_MS = 5000; // 5.0 seconds pause tolerance for thinking
-const MIN_SPEECH_MS = 1200; // must speak at least ~1.2s before auto-stop
+const SILENCE_THRESHOLD = 2.5;        // sensitive — picks up voice quickly
+const SILENCE_SHORT_MS = 1800;        // short answer (< 4s speech): stop after 1.8s silence
+const SILENCE_LONG_MS  = 3200;        // long answer  (>= 4s speech): allow 3.2s thinking pause
+const LONG_SPEECH_THRESHOLD_MS = 4000; // if spoken >= 4s → treat as long answer
+const MIN_SPEECH_MS = 600;            // minimum speech before accepting answer
 
 /* ── Mic Icon SVG ── */
 function MicIcon({ size = 22 }) {
@@ -219,28 +221,31 @@ export default function AudioRecorder({
             onSpeechStartRef.current?.();
             hasSpokenRef.current = true;
           }
-          clearTimeout(silenceTimerRef.current);
-          silenceTimerRef.current = null;
-        } else if (
-          hasSpokenRef.current &&
-          !silenceTimerRef.current
-        ) {
-          silenceTimerRef.current = setTimeout(() => {
+          if (silenceTimerRef.current) {
+            clearTimeout(silenceTimerRef.current);
             silenceTimerRef.current = null;
-            // Guard: do not stop if SR is actively receiving transcript updates
-            const srActive = isSRActiveRef.current;
-            const timeSinceLastText = performance.now() - (lastLiveTextTimeRef.current || 0);
-            const srRecentlyActive = timeSinceLastText < 2000;
-            if (srActive || srRecentlyActive) {
-              // SR is still processing — reschedule with a shorter wait
-              silenceTimerRef.current = setTimeout(() => {
-                silenceTimerRef.current = null;
-                if (isRecordingRef.current) stopRef.current?.();
-              }, 2500);
-              return;
+          }
+        } else if (hasSpokenRef.current) {
+          const timeSinceLastText = performance.now() - (lastLiveTextTimeRef.current || 0);
+          // Only block silence timer if SR is actively transcribing AND very recent
+          const isBrowserTranscribing = isSRActiveRef.current && timeSinceLastText < 400;
+
+          if (isBrowserTranscribing) {
+            if (silenceTimerRef.current) {
+              clearTimeout(silenceTimerRef.current);
+              silenceTimerRef.current = null;
             }
-            if (isRecordingRef.current) stopRef.current?.();
-          }, SILENCE_DURATION_MS);
+          } else if (!silenceTimerRef.current) {
+            // Adaptive silence window:
+            // — Short answer (< 4s of speech) → 1.8s silence = stop quickly
+            // — Long  answer (>= 4s of speech) → 3.2s silence = allow thinking pauses
+            const isLongAnswer = speechMsRef.current >= LONG_SPEECH_THRESHOLD_MS;
+            const silenceWait = isLongAnswer ? SILENCE_LONG_MS : SILENCE_SHORT_MS;
+            silenceTimerRef.current = setTimeout(() => {
+              silenceTimerRef.current = null;
+              if (isRecordingRef.current) stopRef.current?.();
+            }, silenceWait);
+          }
         }
         animFrameRef.current = requestAnimationFrame(check);
       };
@@ -310,7 +315,7 @@ export default function AudioRecorder({
       source.connect(analyser);
 
       pcmChunksRef.current = [];
-      const processor = ctx.createScriptProcessor(4096, 1, 1);
+      const processor = ctx.createScriptProcessor(1024, 1, 1); // smaller buffer = lower latency
       processorRef.current = processor;
       processor.onaudioprocess = (e) => {
         if (!isRecordingRef.current) return;

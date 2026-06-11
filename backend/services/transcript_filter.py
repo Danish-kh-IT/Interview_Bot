@@ -26,6 +26,32 @@ _HALLUCINATION_PHRASES = (
     "for watching",
     "see you in the next",
     "don't forget to subscribe",
+    "okay then",
+    "great",
+    "alright",
+    "can you hear me",
+    "are you there",
+    "hello hello",
+    "is anyone there",
+    "testing testing",
+    "mic check",
+    "one two three",
+    "check check",
+)
+
+# Phrases Whisper appends at the END of real speech (trailing hallucinations)
+_TRAILING_HALLUCINATIONS = (
+    "thank you",
+    "thank you.",
+    "thank you!",
+    "thanks.",
+    "thanks!",
+    "thank you very much",
+    "thank you so much",
+    "thanks so much",
+    "thank you for your attention",
+    "thanks for your attention",
+    "thank you for listening",
 )
 
 
@@ -97,9 +123,22 @@ def is_likely_hallucination(text: str) -> bool:
     return False
 
 
+def strip_trailing_hallucination(text: str) -> str:
+    """Remove Whisper-hallucinated trailing phrases from the END of real speech."""
+    t = text.strip()
+    lower_t = t.lower()
+    for phrase in _TRAILING_HALLUCINATIONS:
+        if lower_t.endswith(phrase):
+            # Strip the trailing hallucination and clean up
+            t = t[: len(t) - len(phrase)].rstrip(" ,.!?")
+            break  # only strip one trailing phrase
+    return t
+
+
 def sanitize_transcript(text: str) -> str:
     """Return cleaned transcript or empty string if unreliable."""
     cleaned = re.sub(r"\s+", " ", (text or "").strip())
     if is_likely_hallucination(cleaned):
         return ""
+    cleaned = strip_trailing_hallucination(cleaned)
     return cleaned
