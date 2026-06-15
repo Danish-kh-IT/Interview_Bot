@@ -988,6 +988,13 @@ export default function Interview({ sessionData, setSessionData }) {
           "finish the interview", "finish interview", "end the meeting", "stop the meeting",
           "i want to end", "want to end", "i am done", "i'm done", "that's all",
           "thats all", "end it now", "i want to stop",
+          "end meeting", "end this meeting", "end the meeting", "stop interview","stop the interview", 
+          "leave meeting","leave the meeting","i'm leaving the meeting", "i'm leaving the interview", 
+          "quit", "I'm quit this interview", "I have to quit this interview", "leave the interview",
+          "i want to end", "stop the interview", "end the interview","i want to end this meeting","i want to end this interview",
+          "i want to stop this interview", "i want to stop this meeting", "i want to stop the interview", "i want to stop the meeting",
+          "i don't want to continue", "i don't want to do this anymore", "i don't want to do this interview anymore",
+          "i don't want to continue with this interview", "i don't want to do this interview anymore",
         ];
         const lowerCandidate = candidateText.toLowerCase();
         const wantsToEnd = END_IN_ANSWER_PHRASES.some((p) => lowerCandidate.includes(p));

@@ -3,7 +3,7 @@ import { encodeWav, mergeFloat32 } from "../utils/wavEncoder";
 import { isLikelySpeech } from "../utils/audioAnalysis";
 
 const SAMPLE_RATE = 16000;
-const SILENCE_THRESHOLD = 2.5;        // sensitive — picks up voice quickly
+const SILENCE_THRESHOLD = 3.5;        // increased slightly to avoid triggering on AC/fan noise
 const SILENCE_SHORT_MS = 1800;        // short answer (< 4s speech): stop after 1.8s silence
 const SILENCE_LONG_MS  = 3200;        // long answer  (>= 4s speech): allow 3.2s thinking pause
 const LONG_SPEECH_THRESHOLD_MS = 4000; // if spoken >= 4s → treat as long answer

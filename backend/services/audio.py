@@ -113,6 +113,7 @@ async def _groq_transcribe(audio_bytes: bytes, filename: str, content_type: str)
         model="whisper-large-v3",
         response_format="text",
         temperature=0,
+        language="en",
     )
     cleaned = sanitize_transcript(transcription)
     if not cleaned and transcription:

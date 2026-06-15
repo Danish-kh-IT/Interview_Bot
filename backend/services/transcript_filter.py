@@ -37,6 +37,14 @@ _HALLUCINATION_PHRASES = (
     "mic check",
     "one two three",
     "check check",
+    "norske lagerhavn",
+    "undertekster av",
+    "ai-media",
+    "tired of this shit",
+    "Thank you",
+    "thank you so much",
+    "thank you for your time",
+    "thank you for your time",
 )
 
 # Phrases Whisper appends at the END of real speech (trailing hallucinations)
