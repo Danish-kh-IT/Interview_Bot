@@ -425,7 +425,6 @@ const READY_PHRASES = [
   "absolutely",
   "of course",
   "i'm ready",
-  "i'm not ready",
   "next question",
   "i want to move next question",
   "definitely",
@@ -440,6 +439,8 @@ const NOT_READY_PHRASES = [
   "one minute",
   "just a minute",
   "i'm not ready",
+  "i am not ready",
+  "not ready yet",
   // End interview commands
   "end",
   "stop",
@@ -747,8 +748,11 @@ export default function Interview({ sessionData, setSessionData }) {
           isRetryRef.current = true;
           repeatCurrentQuestionRef.current?.();
         },
-        ["repeat", "repeat question", "same question", "again", "yes", "yeah", "sure", "repeat it"],
+        // "repeat"/"again"/"no" → repeat the same question (user doesn't want to move forward)
+        ["repeat", "repeat question", "same question", "again", "yes", "yeah", "sure", "repeat it",
+         "no", "nope", "don't", "not"],
         () => confirmAdvanceNextRef.current?.(),
+        // "next"/"move on" → go to next question
         ["next", "next question", "move on", "proceed", "skip", "forward", "next one"]
       );
     });
@@ -919,12 +923,19 @@ export default function Interview({ sessionData, setSessionData }) {
 
   const handleRecordingComplete = useCallback(
     async (audioBlob) => {
+      // ── GUARD: If we're in a confirmation phase, this audio is from the user's
+      //    verbal confirmation (e.g. "next question please"), NOT an interview answer.
+      //    Discard it silently to prevent ghost submissions.
+      const currentPhase = flowPhaseRef.current;
+      if (currentPhase !== "idle") {
+        console.log(`[Interview] Recording discarded — flowPhase is '${currentPhase}', not 'idle'`);
+        return;
+      }
+
       // Cancel silence check — candidate spoke
       if (silenceCheckRef.current) clearTimeout(silenceCheckRef.current);
       silenceCheckRef.current = null;
       stopConfirmRecognition();
-      // Keep flowPhase as 'idle' only for a clean start, but move to processing immediately
-      setFlowPhaseSync("idle");
       setIsProcessing(true);
       try {
         const data = await submitAnswer(
@@ -941,7 +952,10 @@ export default function Interview({ sessionData, setSessionData }) {
           if (noVoiceRetryCountRef.current <= 2) {
             console.log("[Interview] Backend no_speech — retry", noVoiceRetryCountRef.current);
             setTimeout(() => {
-              if (flowPhaseRef.current === "idle") setRecordingTrigger((p) => p + 1);
+              if (flowPhaseRef.current === "idle") {
+                setRecordingTrigger((p) => p + 1);
+                scheduleSilenceCheckRef.current?.();
+              }
             }, 800);
           } else {
             noVoiceRetryCountRef.current = 0;
@@ -971,7 +985,10 @@ export default function Interview({ sessionData, setSessionData }) {
           if (noVoiceRetryCountRef.current <= 2) {
             console.log("[Interview] Empty transcript — retry", noVoiceRetryCountRef.current);
             setTimeout(() => {
-              if (flowPhaseRef.current === "idle") setRecordingTrigger((p) => p + 1);
+              if (flowPhaseRef.current === "idle") {
+                setRecordingTrigger((p) => p + 1);
+                scheduleSilenceCheckRef.current?.();
+              }
             }, 800);
           } else {
             noVoiceRetryCountRef.current = 0;

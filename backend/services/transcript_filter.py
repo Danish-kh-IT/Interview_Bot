@@ -41,10 +41,6 @@ _HALLUCINATION_PHRASES = (
     "undertekster av",
     "ai-media",
     "tired of this shit",
-    "Thank you",
-    "thank you so much",
-    "thank you for your time",
-    "thank you for your time",
 )
 
 # Phrases Whisper appends at the END of real speech (trailing hallucinations)
@@ -99,9 +95,9 @@ def measure_wav_pcm(wav_bytes: bytes) -> dict:
 
 def is_audio_too_quiet(wav_bytes: bytes) -> bool:
     m = measure_wav_pcm(wav_bytes)
-    if m["peak"] < 0.018:
+    if m["peak"] < 0.035:
         return True
-    if m["rms"] < 0.006:
+    if m["rms"] < 0.012:
         return True
     if m["speech_ratio"] < 0.08:
         return True
@@ -113,6 +109,15 @@ def is_likely_hallucination(text: str) -> bool:
     if not t:
         return True
     if len(t) < 6:
+        return True
+
+    # Exact match for common short hallucinations that shouldn't blanket-ban longer answers
+    exact_hallucinations = [
+        "thank you", "thank you.", "thank you!", "thanks", "thanks.",
+        "thank you you", "thank you. you", "thank you so much",
+        "thank you so much.", "thank you for your time", "thank you for your time."
+    ]
+    if t in exact_hallucinations:
         return True
 
     for phrase in _HALLUCINATION_PHRASES:

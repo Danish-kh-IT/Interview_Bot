@@ -35,9 +35,9 @@ export function analyzeAudio(samples, sampleRate = 16000) {
 
 export function isLikelySpeech(samples, sampleRate = 16000) {
   const { peak, rms, speechMs, durationSec } = analyzeAudio(samples, sampleRate);
-  if (durationSec < 0.5) return false;   // was 0.8 - more lenient
-  if (peak < 0.010) return false;        // was 0.018 - more sensitive
-  if (rms < 0.003) return false;         // was 0.006 - more sensitive
+  if (durationSec < 0.5) return false;
+  if (peak < 0.025) return false;        // stricter peak for background noise
+  if (rms < 0.008) return false;         // stricter rms for background noise
   if (speechMs < 400) return false;      // was 1000ms - detect shorter answers
   return true;
 }
