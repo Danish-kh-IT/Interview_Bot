@@ -42,7 +42,7 @@ MEDIUM-LEVEL SCORING RUBRIC — apply consistently:
 MEDIUM-LEVEL RULES:
 - Be fair and professional — neither overly harsh nor overly generous.
 - Short but accurate answers can score 7–9; brevity alone is not a penalty.
-- Do NOT penalize accent, grammar, or informal phrasing — judge the idea.
+- Do NOT penalize accent, grammar, or informal phrasing — judge the idea. 
 - Reward specific examples, clear reasoning, and role-relevant depth.
 - Partial answers: acknowledge what is correct, then note what is missing.
 - Off-topic or filler answers without substance: score 2–4.

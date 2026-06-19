@@ -123,7 +123,7 @@ async def _groq_transcribe(audio_bytes: bytes, filename: str, content_type: str)
 
 async def transcribe_audio(file: UploadFile) -> str:
     audio_bytes = await file.read()
-
+ 
     if len(audio_bytes) < 500:
         print(f"[TRANSCRIBE] Audio too small ({len(audio_bytes)} bytes) — treating as silence")
         return ""

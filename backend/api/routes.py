@@ -170,9 +170,12 @@ async def submit_answer(
     save_session(session_id, state)
 
     score_entry = state["scores"][state["current_question_index"]]
+    total_questions = len(state.get("questions", [])) or 10
+    is_last_question = (state["current_question_index"] + 1) >= total_questions
     return {
         "completed": False,
         "awaiting_confirmation": True,
+        "is_last_question": is_last_question,
         "question_text": state["current_question"],
         "audio_base64": state.get("current_audio_base64", ""),
         "question_number": state["current_question_index"] + 1,

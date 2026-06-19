@@ -787,7 +787,7 @@ export default function Interview({ sessionData, setSessionData }) {
         setFlowPhaseSync("ending");
         setIsProcessing(false);
         const endMsg =
-          "Thank you for your time. Your interview is complete. Generating your performance report now.";
+          "That was the last question. Thank you so much for your time today. Your interview is now complete. We will generate your performance report shortly. Have a great day!";
         speak(endMsg, () => navigate("/result"));
         return;
       }
@@ -1028,7 +1028,14 @@ export default function Interview({ sessionData, setSessionData }) {
           return;
         }
 
-        askMoveToNext();
+        // If this was the last question, skip the "next question?" prompt
+        // and directly advance — the backend will return completed:true
+        if (data.is_last_question) {
+          console.log("[Interview] Last question answered — auto-advancing to completion");
+          confirmAdvanceNextRef.current?.();
+        } else {
+          askMoveToNext();
+        }
       } catch (err) {
         // Log exact error for debugging
         const errDetail =
