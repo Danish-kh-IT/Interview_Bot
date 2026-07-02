@@ -2,6 +2,14 @@ import { useEffect, useRef, useState } from 'react';
 
 let currentAudio = null;
 
+export function stopCurrentAudio() {
+  if (currentAudio) {
+    currentAudio.pause();
+    currentAudio.src = '';
+    currentAudio = null;
+  }
+}
+
 /* ── Animated Waveform bars ── */
 function Waveform({ active }) {
   const heights = [40, 90, 60, 100, 50, 80, 35, 70, 55, 85];

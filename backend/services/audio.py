@@ -192,6 +192,74 @@ async def transcribe_audio(file: UploadFile) -> str:
 
     raise Exception("Transcription failed after all attempts")
 
+
+async def transcribe_audio_bytes(audio_bytes: bytes, filename: str, content_type: str) -> str:
+    """
+    Transcribe audio from raw bytes (used by WebSocket endpoint).
+    Same logic as transcribe_audio() but accepts bytes directly.
+    """
+    if len(audio_bytes) < 500:
+        print(f"[TRANSCRIBE-WS] Audio too small ({len(audio_bytes)} bytes) — treating as silence")
+        return ""
+
+    ext = _guess_extension(content_type, filename)
+
+    print(
+        f"[TRANSCRIBE-WS] Received {len(audio_bytes)} bytes, "
+        f"content_type={content_type}, filename={filename}, ext={ext}"
+    )
+
+    if _is_wav(audio_bytes):
+        filename = "audio.wav"
+        content_type = "audio/wav"
+        ext = ".wav"
+    elif ext in _NEEDS_CONVERSION:
+        try:
+            audio_bytes = await _convert_to_wav(audio_bytes, ext)
+            filename = "audio.wav"
+            content_type = "audio/wav"
+            ext = ".wav"
+        except Exception as conv_err:
+            msg = str(conv_err).strip() or repr(conv_err)
+            print(f"[TRANSCRIBE-WS] Conversion failed: {msg}")
+            raise Exception(f"Audio conversion failed: {msg}") from conv_err
+
+    if _is_wav(audio_bytes) and is_audio_too_quiet(audio_bytes):
+        print("[TRANSCRIBE-WS] Audio too quiet — skipping Whisper")
+        return ""
+
+    for attempt in range(3):
+        try:
+            print(
+                f"[TRANSCRIBE-WS] Submitting to Groq: filename={filename}, "
+                f"bytes={len(audio_bytes)}, attempt={attempt + 1}"
+            )
+            return await _groq_transcribe(audio_bytes, filename, content_type)
+        except Exception as e:
+            err_str = str(e)
+            print(f"[TRANSCRIBE-WS] Attempt {attempt + 1}/3 failed: {err_str[:200]}")
+
+            if "429" in err_str or "rate_limit" in err_str.lower():
+                await asyncio.sleep((attempt + 1) * 5)
+                continue
+
+            if attempt == 0 and ext not in _NEEDS_CONVERSION:
+                try:
+                    audio_bytes = await _convert_to_wav(audio_bytes, ext or ".webm")
+                    filename = "audio.wav"
+                    content_type = "audio/wav"
+                    continue
+                except Exception:
+                    pass
+
+            if attempt < 2:
+                await asyncio.sleep(2)
+                continue
+
+            raise Exception(f"Transcription failed: {err_str[:200]}") from e
+
+    raise Exception("Transcription failed after all attempts")
+
 async def generate_tts(text: str) -> str:
     # Use mkstemp to avoid Windows file-locking issue with NamedTemporaryFile
     temp_fd, temp_path = tempfile.mkstemp(suffix=".mp3")

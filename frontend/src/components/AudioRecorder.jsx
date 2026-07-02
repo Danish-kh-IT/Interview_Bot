@@ -3,11 +3,12 @@ import { encodeWav, mergeFloat32 } from "../utils/wavEncoder";
 import { isLikelySpeech } from "../utils/audioAnalysis";
 
 const SAMPLE_RATE = 16000;
-const SILENCE_THRESHOLD = 4.5;        // strict threshold — ignore fan/AC noise completely
-const SILENCE_SHORT_MS = 1800;        // short answer (< 4s speech): stop after 1.8s silence
-const SILENCE_LONG_MS  = 3200;        // long answer  (>= 4s speech): allow 3.2s thinking pause
+const SILENCE_THRESHOLD = 2.5;        // lowered: detect softer voices quickly
+const SILENCE_SHORT_MS = 1200;        // short answer: stop after 1.2s silence (was 1.8s)
+const SILENCE_LONG_MS  = 2500;        // long answer: allow 2.5s thinking pause (was 3.2s)
 const LONG_SPEECH_THRESHOLD_MS = 4000; // if spoken >= 4s → treat as long answer
-const MIN_SPEECH_MS = 600;            // minimum speech before accepting answer
+const MIN_SPEECH_MS = 250;            // minimum speech: 250ms (was 600ms) — detect quick answers
+const NO_SPEECH_TIMEOUT_MS = 10000;   // if no speech is detected for 10s, auto-stop
 
 /* ── Mic Icon SVG ── */
 function MicIcon({ size = 22 }) {
@@ -106,6 +107,7 @@ export default function AudioRecorder({
   const onNoVoiceRef = useRef(onNoVoice);
   const onLiveTextRef = useRef(onLiveText);
   const onSpeechStartRef = useRef(onSpeechStart);
+  const noSpeechTimerRef = useRef(null);
   const stopRef = useRef(null);
   const recognitionRef = useRef(null);
 
@@ -129,7 +131,7 @@ export default function AudioRecorder({
     const samples = mergeFloat32(pcmChunksRef.current);
     pcmChunksRef.current = [];
 
-    if (samples.length < sampleRateRef.current * 0.8) {
+    if (samples.length < sampleRateRef.current * 0.4) {
       console.log("[AudioRecorder] Recording too short");
       onNoVoiceRef.current?.();
       return;
@@ -170,7 +172,9 @@ export default function AudioRecorder({
     onLiveTextRef.current?.("");
     cancelAnimationFrame(animFrameRef.current);
     clearTimeout(silenceTimerRef.current);
+    clearTimeout(noSpeechTimerRef.current);
     silenceTimerRef.current = null;
+    noSpeechTimerRef.current = null;
     isSRActiveRef.current = false;
     try {
       recognitionRef.current?.stop();
@@ -196,6 +200,15 @@ export default function AudioRecorder({
       const data = new Uint8Array(analyser.fftSize);
       hasSpokenRef.current = false;
       speechMsRef.current = 0;
+
+      if (noSpeechTimerRef.current) clearTimeout(noSpeechTimerRef.current);
+      noSpeechTimerRef.current = setTimeout(() => {
+        if (isRecordingRef.current && !hasSpokenRef.current) {
+          console.log("[AudioRecorder] Absolute timeout - no speech detected");
+          stopRef.current?.();
+        }
+      }, NO_SPEECH_TIMEOUT_MS);
+
       let lastTime = performance.now();
       const check = () => {
         if (!isRecordingRef.current) return;
@@ -220,6 +233,10 @@ export default function AudioRecorder({
           if (!hasSpokenRef.current) {
             onSpeechStartRef.current?.();
             hasSpokenRef.current = true;
+            if (noSpeechTimerRef.current) {
+              clearTimeout(noSpeechTimerRef.current);
+              noSpeechTimerRef.current = null;
+            }
           }
           if (silenceTimerRef.current) {
             clearTimeout(silenceTimerRef.current);

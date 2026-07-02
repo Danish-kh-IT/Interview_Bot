@@ -1,13 +1,12 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import { useNavigate } from "react-router-dom";
 import {
-  submitAnswer,
   generateQuestions,
   getFirstQuestion,
-  advanceQuestion,
   endInterview,
 } from "../utils/api";
-import AudioPlayer from "../components/AudioPlayer";
+import { InterviewSocket } from "../utils/socket";
+import AudioPlayer, { stopCurrentAudio } from "../components/AudioPlayer";
 import AudioRecorder from "../components/AudioRecorder";
 
 /* ── Professional SVG Logo Mark (shared) ── */
@@ -532,11 +531,11 @@ export default function Interview({ sessionData, setSessionData }) {
   const chatEndRef = useRef(null);
   const waitIntervalRef = useRef(null);
   const countdownRef = useRef(null);
-  const silenceCheckRef = useRef(null); // setTimeout for "can you hear me"
-  const confirmRecogRef = useRef(null); // SpeechRecognition for confirmation
+  const silenceCheckRef = useRef(null);
+  const confirmRecogRef = useRef(null);
   const pendingNextDataRef = useRef(null);
   const isRetryRef = useRef(false);
-  const noVoiceRetryCountRef = useRef(0); // track consecutive no-voice failures
+  const noVoiceRetryCountRef = useRef(0);
   const flowPhaseRef = useRef("idle");
   const scheduleSilenceCheckRef = useRef(null);
   const handleEndCallRef = useRef(null);
@@ -544,6 +543,15 @@ export default function Interview({ sessionData, setSessionData }) {
   const askRepeatQuestionRef = useRef(null);
   const repeatCurrentQuestionRef = useRef(null);
   const confirmAdvanceNextRef = useRef(null);
+  // WebSocket
+  const socketRef = useRef(null);
+  // Streaming TTS audio queue
+  const ttsQueueRef = useRef([]);
+  const ttsPlayingRef = useRef(false);
+  const _pendingTTSCallback = useRef(null);
+  const _drainTTSQueueRef = useRef(null); // ref so it's accessible inside useEffect
+  const askMoveToNextRef = useRef(null);  // same
+  const askAreYouListeningRef = useRef(null);
 
   /* ── Phrase sets for repeat/end flow are now module-level constants ── */
 
@@ -577,11 +585,12 @@ export default function Interview({ sessionData, setSessionData }) {
       clearTimeout(silenceCheckRef.current);
       stopConfirmRecognition();
       window.speechSynthesis?.cancel();
+      socketRef.current?.disconnect();
     },
     [],
   ); // eslint-disable-line
 
-  /* ── Load questions ── */
+  /* ── Load questions + connect WebSocket ── */
   useEffect(() => {
     if (!sessionData?.session_id) {
       navigate("/");
@@ -590,7 +599,118 @@ export default function Interview({ sessionData, setSessionData }) {
     generateQuestions(sessionData.session_id)
       .then(() => setQuestionsReady(true))
       .catch((err) => console.error("Question gen error:", err));
+
+    // Connect WebSocket
+    const socket = new InterviewSocket(sessionData.session_id);
+    socketRef.current = socket;
+
+    socket.connect().then(() => {
+      console.log("[Interview] WebSocket connected");
+    }).catch((err) => {
+      console.warn("[Interview] WebSocket failed to connect, falling back to REST:", err);
+    });
+
+    // ── Handle streaming TTS chunks from server ──
+    socket.on("tts_chunk", (msg) => {
+      ttsQueueRef.current.push({ audio: msg.audio, isLast: msg.is_last, text: msg.text });
+      if (!ttsPlayingRef.current) {
+        _drainTTSQueueRef.current?.();
+      }
+    });
+
+    // ── Question text arrives before audio ──
+    socket.on("question_start", (msg) => {
+      // NOTE: Do NOT clear isProcessing here, otherwise AudioRecorder starts picking up TTS!
+      setIsWelcomePhase(false);
+      setChatHistory((prev) => [...prev, { type: "bot", text: msg.question_text }]);
+      setCurrentBotText(msg.question_text);
+      setSessionData((prev) => ({
+        ...prev,
+        question_text: msg.question_text,
+        question_number: msg.question_number,
+        audio_base64: null,
+      }));
+    });
+
+    // ── All TTS chunks sent, recording can start ──
+    socket.on("question_done", (_msg) => {
+      // Recording starts only after TTS queue finishes playing
+      // handled inside _drainTTSQueue isLast callback
+    });
+
+    // ── Transcript received (show user bubble immediately) ──
+    socket.on("transcript", (msg) => {
+      setChatHistory((prev) => [...prev, { type: "user", text: msg.text }]);
+      setLiveText("");
+    });
+
+    // ── No speech detected ──
+    socket.on("no_speech", () => {
+      setIsProcessing(false);
+      noVoiceRetryCountRef.current += 1;
+      if (noVoiceRetryCountRef.current <= 2) {
+        setTimeout(() => {
+          if (flowPhaseRef.current === "idle") setRecordingTrigger((p) => p + 1);
+        }, 800);
+      } else {
+        noVoiceRetryCountRef.current = 0;
+        askAreYouListeningRef.current?.();
+      }
+    });
+
+    // ── Done: evaluation complete ──
+    socket.on("done", (msg) => {
+      setIsProcessing(false);
+      if (msg.completed) {
+        setFlowPhaseSync("ending");
+        const endMsg = "Thank you so much for your time today. Your interview is now complete. We will generate your performance report shortly. Have a great day!";
+        speak(endMsg, () => navigate("/result"));
+        return;
+      }
+      if (msg.awaiting_confirmation) {
+        noVoiceRetryCountRef.current = 0;
+        if (msg.is_last_question) {
+          confirmAdvanceNextRef.current?.();
+        } else {
+          askMoveToNextRef.current?.();
+        }
+      }
+    });
+
+    // ── Server error ──
+    socket.on("error", (msg) => {
+      setIsProcessing(false);
+      setChatHistory((prev) => [...prev, {
+        type: "bot",
+        text: `⚠️ Error: ${msg.message}. Please try again.`,
+        isError: true,
+      }]);
+    });
+
   }, []); // eslint-disable-line
+
+  /* ── Drain TTS audio queue (play chunks sequentially) ── */
+  function _drainTTSQueue() {
+    const next = ttsQueueRef.current.shift();
+    if (!next) {
+      ttsPlayingRef.current = false;
+      return;
+    }
+    ttsPlayingRef.current = true;
+    setSessionData((prev) => ({ ...prev, audio_base64: next.audio }));
+    _pendingTTSCallback.current = () => {
+      if (next.isLast) {
+        ttsPlayingRef.current = false;
+        setIsProcessing(false); // FIX: allow AudioRecorder to start
+        setRecordingTrigger((p) => p + 1);
+        scheduleSilenceCheckRef.current?.();
+      } else {
+        _drainTTSQueue();
+      }
+    };
+  }
+  // Keep ref in sync so useEffect handlers can call it
+  _drainTTSQueueRef.current = _drainTTSQueue;
 
   /* ──────────────────────────────────────────────── */
   /*          Confirmation Recognition               */
@@ -710,11 +830,11 @@ export default function Interview({ sessionData, setSessionData }) {
   /* ── Repeat current question and start recording ── */
   const repeatCurrentQuestion = useCallback(() => {
     stopConfirmRecognition();
-    setFlowPhaseSync("idle");
     const questionText = currentQuestionTextRef.current;
-    setChatHistory((prev) => [...prev, { type: "bot", text: questionText }]);
-    setCurrentBotText(questionText);
+    // NOTE: do NOT push to chatHistory again — question is already visible in chat
+    setCurrentBotText(questionText); // keep typewriter effect showing current question
     speak(questionText, () => {
+      setFlowPhaseSync("idle"); // start recorder ONLY AFTER speaking finishes
       setRecordingTrigger((p) => p + 1);
       scheduleSilenceCheckRef.current?.();
     });
@@ -776,18 +896,29 @@ export default function Interview({ sessionData, setSessionData }) {
     });
   }, [startConfirmListening]);
 
-  /* ── Step 3 YES: advance to next question via API ── */
+  /* ── Step 3 YES: advance to next question via WebSocket or REST ── */
   const confirmAdvanceNext = useCallback(async () => {
     if (isProcessing) return;
     stopConfirmRecognition();
     setIsProcessing(true);
+
+    // WebSocket path
+    const socket = socketRef.current;
+    if (socket?.isConnected) {
+      setFlowPhaseSync("idle");
+      socket.advanceQuestion();
+      // Response handled by socket.on("question_start") + socket.on("tts_chunk") + socket.on("done")
+      return;
+    }
+
+    // REST fallback
     try {
+      const { advanceQuestion } = await import("../utils/api");
       const data = await advanceQuestion(sessionData.session_id);
       if (data.completed) {
         setFlowPhaseSync("ending");
         setIsProcessing(false);
-        const endMsg =
-          "That was the last question. Thank you so much for your time today. Your interview is now complete. We will generate your performance report shortly. Have a great day!";
+        const endMsg = "That was the last question. Thank you so much for your time today. Your interview is now complete. We will generate your performance report shortly. Have a great day!";
         speak(endMsg, () => navigate("/result"));
         return;
       }
@@ -797,17 +928,14 @@ export default function Interview({ sessionData, setSessionData }) {
     } catch (err) {
       console.error("[Advance Question Error]", err);
       setIsProcessing(false);
-      setChatHistory((prev) => [
-        ...prev,
-        {
-          type: "bot",
-          text: "Unable to load the next question. Please try again.",
-          isError: true,
-        },
-      ]);
+      setChatHistory((prev) => [...prev, {
+        type: "bot",
+        text: "Unable to load the next question. Please try again.",
+        isError: true,
+      }]);
       setFlowPhaseSync("awaiting_next");
     }
-  }, [sessionData, navigate, proceedToNextQuestion]);
+  }, [sessionData, navigate, proceedToNextQuestion, isProcessing]);
 
   /* ── Step 1: No speech → "Are you listening?" ── */
   const askAreYouListening = useCallback(() => {
@@ -852,6 +980,8 @@ export default function Interview({ sessionData, setSessionData }) {
   askEndInterviewRef.current = askEndInterview;
   askRepeatQuestionRef.current = askRepeatQuestion;
   confirmAdvanceNextRef.current = confirmAdvanceNext;
+  askMoveToNextRef.current = askMoveToNext;
+  askAreYouListeningRef.current = askAreYouListening;
 
   /* ──────────────────────────────────────────────── */
   /*         Audio ended → get next question        */
@@ -861,6 +991,14 @@ export default function Interview({ sessionData, setSessionData }) {
   }, []);
 
   const handleAudioEnded = useCallback(async () => {
+    // ── If there's a pending WS TTS chunk callback, call it ──
+    if (_pendingTTSCallback.current) {
+      const cb = _pendingTTSCallback.current;
+      _pendingTTSCallback.current = null;
+      cb();
+      return;
+    }
+
     if (isWelcomePhase) {
       const tryGetFirst = async () => {
         try {
@@ -886,9 +1024,8 @@ export default function Interview({ sessionData, setSessionData }) {
         waitIntervalRef.current = setInterval(tryGetFirst, 1500);
       }
     } else {
-      // Question audio finished → start recording
+      // Question audio (REST path) finished → start recording
       triggerRecording();
-      // Schedule silence check (if candidate doesn't speak)
       scheduleSilenceCheck();
     }
   }, [
@@ -923,21 +1060,38 @@ export default function Interview({ sessionData, setSessionData }) {
 
   const handleRecordingComplete = useCallback(
     async (audioBlob) => {
-      // ── GUARD: If we're in a confirmation phase, this audio is from the user's
-      //    verbal confirmation (e.g. "next question please"), NOT an interview answer.
-      //    Discard it silently to prevent ghost submissions.
       const currentPhase = flowPhaseRef.current;
       if (currentPhase !== "idle") {
-        console.log(`[Interview] Recording discarded — flowPhase is '${currentPhase}', not 'idle'`);
+        console.log(`[Interview] Recording discarded — flowPhase is '${currentPhase}'`);
         return;
       }
 
-      // Cancel silence check — candidate spoke
       if (silenceCheckRef.current) clearTimeout(silenceCheckRef.current);
       silenceCheckRef.current = null;
       stopConfirmRecognition();
       setIsProcessing(true);
+
+      // ── WebSocket path (preferred) ──
+      const socket = socketRef.current;
+      if (socket?.isConnected) {
+        try {
+          // Send raw WAV bytes directly over WebSocket
+          const arrayBuffer = await audioBlob.arrayBuffer();
+          socket.sendAudio(arrayBuffer);
+          socket.endOfSpeech(isRetryRef.current);
+          isRetryRef.current = false;
+          // Response handled by socket.on("done") / socket.on("transcript") etc.
+        } catch (err) {
+          console.error("[Interview-WS] Send error:", err);
+          setIsProcessing(false);
+        }
+        return;
+      }
+
+      // ── REST fallback (if WebSocket not connected) ──
+      console.warn("[Interview] WebSocket not connected — using REST fallback");
       try {
+        const { submitAnswer } = await import("../utils/api");
         const data = await submitAnswer(
           sessionData.session_id,
           audioBlob,
@@ -947,10 +1101,8 @@ export default function Interview({ sessionData, setSessionData }) {
 
         if (data.no_speech) {
           setIsProcessing(false);
-          // Retry recording silently instead of immediately asking "can you hear me"
           noVoiceRetryCountRef.current += 1;
           if (noVoiceRetryCountRef.current <= 2) {
-            console.log("[Interview] Backend no_speech — retry", noVoiceRetryCountRef.current);
             setTimeout(() => {
               if (flowPhaseRef.current === "idle") {
                 setRecordingTrigger((p) => p + 1);
@@ -967,11 +1119,8 @@ export default function Interview({ sessionData, setSessionData }) {
         if (data.completed) {
           setFlowPhaseSync("ending");
           setIsProcessing(false);
-          const endMsg =
-            "Thank you so much for your time today. Your interview is now complete. We have recorded all your responses and will generate your performance report shortly. Have a great day!";
-          speak(endMsg, () => {
-            navigate("/result");
-          });
+          const endMsg = "Thank you so much for your time today. Your interview is now complete. We have recorded all your responses and will generate your performance report shortly. Have a great day!";
+          speak(endMsg, () => navigate("/result"));
           return;
         }
 
@@ -980,10 +1129,8 @@ export default function Interview({ sessionData, setSessionData }) {
 
         if (!candidateText) {
           setIsProcessing(false);
-          // Empty transcript — retry silently instead of asking "can you hear me"
           noVoiceRetryCountRef.current += 1;
           if (noVoiceRetryCountRef.current <= 2) {
-            console.log("[Interview] Empty transcript — retry", noVoiceRetryCountRef.current);
             setTimeout(() => {
               if (flowPhaseRef.current === "idle") {
                 setRecordingTrigger((p) => p + 1);
@@ -996,67 +1143,38 @@ export default function Interview({ sessionData, setSessionData }) {
           }
           return;
         }
-        // Successful answer — reset retry counter
         noVoiceRetryCountRef.current = 0;
 
-        // ── Check if the answer itself contains an end-interview command ──
-        const END_IN_ANSWER_PHRASES = [
-          "end the interview", "end interview", "stop the interview", "stop interview",
-          "finish the interview", "finish interview", "end the meeting", "stop the meeting",
-          "i want to end", "want to end", "i am done", "i'm done", "that's all",
-          "thats all", "end it now", "i want to stop",
-          "end meeting", "end this meeting", "end the meeting", "stop interview","stop the interview", 
-          "leave meeting","leave the meeting","i'm leaving the meeting", "i'm leaving the interview", 
-          "quit", "I'm quit this interview", "I have to quit this interview", "leave the interview",
-          "i want to end", "stop the interview", "end the interview","i want to end this meeting","i want to end this interview",
-          "i want to stop this interview", "i want to stop this meeting", "i want to stop the interview", "i want to stop the meeting",
-          "i don't want to continue", "i don't want to do this anymore", "i don't want to do this interview anymore",
-          "i don't want to continue with this interview", "i don't want to do this interview anymore",
-        ];
         const lowerCandidate = candidateText.toLowerCase();
-        const wantsToEnd = END_IN_ANSWER_PHRASES.some((p) => lowerCandidate.includes(p));
+        const wantsToEnd = [
+          "end the interview", "end interview", "stop the interview", "i want to end",
+          "end the meeting", "i'm done", "i am done", "leave the interview", "quit",
+        ].some((p) => lowerCandidate.includes(p));
 
-        setChatHistory((prev) => [
-          ...prev,
-          { type: "user", text: candidateText },
-        ]);
+        setChatHistory((prev) => [...prev, { type: "user", text: candidateText }]);
         setIsProcessing(false);
 
         if (wantsToEnd) {
-          console.log("[Interview] End command detected in answer — triggering end interview flow");
           askEndInterviewRef.current?.();
           return;
         }
 
-        // If this was the last question, skip the "next question?" prompt
-        // and directly advance — the backend will return completed:true
         if (data.is_last_question) {
-          console.log("[Interview] Last question answered — auto-advancing to completion");
           confirmAdvanceNextRef.current?.();
         } else {
           askMoveToNext();
         }
       } catch (err) {
-        // Log exact error for debugging
-        const errDetail =
-          err?.response?.data?.detail || err?.message || "Unknown error";
+        const errDetail = err?.response?.data?.detail || err?.message || "Unknown error";
         console.error("[Submit Answer Error]", errDetail, err);
-
         setIsProcessing(false);
-        // Show error as a chat message instead of a disruptive alert
-        setChatHistory((prev) => [
-          ...prev,
-          {
-            type: "bot",
-            text: `⚠️ Issue has occur (${errDetail}). Try again —press the mic button and give answer.`,
-            isError: true,
-          },
-        ]);
-        // Auto-retry recording after 2 seconds
+        setChatHistory((prev) => [...prev, {
+          type: "bot",
+          text: `⚠️ Error (${errDetail}). Press the mic and try again.`,
+          isError: true,
+        }]);
         setTimeout(() => {
-          if (flowPhaseRef.current === "idle") {
-            setRecordingTrigger((p) => p + 1);
-          }
+          if (flowPhaseRef.current === "idle") setRecordingTrigger((p) => p + 1);
         }, 2000);
       }
     },
@@ -1103,13 +1221,25 @@ export default function Interview({ sessionData, setSessionData }) {
     clearTimeout(silenceCheckRef.current);
     stopConfirmRecognition();
     window.speechSynthesis?.cancel();
+    stopCurrentAudio();
     setFlowPhaseSync("ending");
     setIsProcessing(true);
 
+    const endMsg = "Thank you so much for your time today. Your interview is now complete. Please wait while we generate your performance report.";
+
+    // Use WebSocket if connected, otherwise REST
+    const socket = socketRef.current;
+    if (socket?.isConnected) {
+      socket.endInterview();
+      // "done" event will be handled by socket.on("done") → navigate("/result")
+      speak(endMsg, () => {});
+      setTimeout(() => navigate("/result"), 5000); // safety fallback
+      return;
+    }
+
+    // REST fallback
     try {
       const endPromise = endInterview(sessionData.session_id);
-      const endMsg = "Thank you so much for your time today. Your interview is now complete. Please wait while we generate your performance report.";
-      
       speak(endMsg, async () => {
         try {
           await endPromise;
