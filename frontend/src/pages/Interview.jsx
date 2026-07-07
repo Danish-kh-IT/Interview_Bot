@@ -184,7 +184,17 @@ function AIAvatar({ size = 40, pulse = false }) {
           zIndex: 1,
         }}
       >
-        <AIAvatarIcon size={Math.round(size * 0.58)} />
+        {pulse ? (
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: "3px", height: size * 0.4 }}>
+            <div className="voice-bar" style={{ height: "100%", width: size * 0.08 }} />
+            <div className="voice-bar" style={{ height: "100%", width: size * 0.08 }} />
+            <div className="voice-bar" style={{ height: "100%", width: size * 0.08 }} />
+            <div className="voice-bar" style={{ height: "100%", width: size * 0.08 }} />
+            <div className="voice-bar" style={{ height: "100%", width: size * 0.08 }} />
+          </div>
+        ) : (
+          <AIAvatarIcon size={Math.round(size * 0.58)} />
+        )}
       </div>
     </div>
   );
