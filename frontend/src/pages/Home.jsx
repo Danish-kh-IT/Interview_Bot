@@ -1,6 +1,6 @@
-import { useState } from 'react';
+import { useState, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { startInterview } from '../utils/api';
+import { startInterview, uploadContext } from '../utils/api';
 import { unlockAudio } from '../utils/audioUnlock';
 
 /* ── Professional SVG Logo Mark ── */
@@ -139,7 +139,10 @@ const FEATURES = [
 export default function Home({ setSessionData }) {
   const [jobTitle, setJobTitle] = useState('');
   const [experienceLevel, setExperienceLevel] = useState('Mid-level');
+  const [resumeFile, setResumeFile] = useState(null);
+  const [jdText, setJdText] = useState('');
   const [isLoading, setIsLoading] = useState(false);
+  const fileInputRef = useRef(null);
   const navigate = useNavigate();
 
   const handleStart = async (e) => {
@@ -149,6 +152,9 @@ export default function Home({ setSessionData }) {
     setIsLoading(true);
     try {
       const data = await startInterview(jobTitle, experienceLevel);
+      if (resumeFile || jdText) {
+         await uploadContext(data.session_id, resumeFile, jdText);
+      }
       // job_title aur experience_level bhi save karo takey Result page mein kaam aaye
       setSessionData({ ...data, job_title: jobTitle, experience_level: experienceLevel });
       navigate('/interview');
@@ -234,6 +240,107 @@ export default function Home({ setSessionData }) {
                 autoComplete="off"
               />
             </div>
+            
+            {/* Resume Upload (Optional) */}
+            <div>
+              <label className="form-label" style={{ display: 'flex', justifyContent: 'space-between' }}>
+                <span>Upload Resume (Optional)</span>
+                <span style={{ fontSize: '0.75rem', color: 'var(--brand-primary)', fontWeight: 500 }}>For Personalized Questions</span>
+              </label>
+              <div 
+                style={{
+                  border: '1px dashed var(--border-light)',
+                  borderRadius: 'var(--radius-md)',
+                  padding: '16px',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '14px',
+                  background: 'rgba(255,255,255,0.02)',
+                  cursor: 'pointer',
+                  transition: 'all 0.2s ease',
+                }}
+                onClick={() => fileInputRef.current?.click()}
+                onMouseOver={(e) => {
+                  e.currentTarget.style.borderColor = 'var(--brand-primary)';
+                  e.currentTarget.style.background = 'rgba(99,102,241,0.04)';
+                }}
+                onMouseOut={(e) => {
+                  e.currentTarget.style.borderColor = 'var(--border-light)';
+                  e.currentTarget.style.background = 'rgba(255,255,255,0.02)';
+                }}
+              >
+                <div style={{ background: 'rgba(99,102,241,0.1)', padding: '10px', borderRadius: '10px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                   <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#a5b4fc" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                      <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
+                      <polyline points="14 2 14 8 20 8"></polyline>
+                      <line x1="12" y1="18" x2="12" y2="12"></line>
+                      <line x1="9" y1="15" x2="15" y2="15"></line>
+                   </svg>
+                </div>
+                <div style={{ flex: 1, overflow: 'hidden' }}>
+                  <div style={{ 
+                    fontSize: '0.9rem', 
+                    color: resumeFile ? 'var(--text-primary)' : 'var(--text-secondary)', 
+                    fontWeight: resumeFile ? 600 : 400,
+                    whiteSpace: 'nowrap',
+                    overflow: 'hidden',
+                    textOverflow: 'ellipsis'
+                  }}>
+                    {resumeFile ? resumeFile.name : 'Click to select PDF'}
+                  </div>
+                  {!resumeFile && <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', marginTop: '3px' }}>Max 5MB. PDF format only.</div>}
+                </div>
+                {resumeFile && (
+                  <button 
+                    type="button"
+                    onClick={(e) => { 
+                      e.stopPropagation(); 
+                      setResumeFile(null); 
+                      if(fileInputRef.current) fileInputRef.current.value = ''; 
+                    }}
+                    style={{ 
+                      background: 'rgba(239, 68, 68, 0.1)', 
+                      border: 'none', 
+                      color: '#ef4444', 
+                      cursor: 'pointer', 
+                      padding: '6px',
+                      borderRadius: '6px',
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      transition: 'background 0.2s ease'
+                    }}
+                    onMouseOver={(e) => e.currentTarget.style.background = 'rgba(239, 68, 68, 0.2)'}
+                    onMouseOut={(e) => e.currentTarget.style.background = 'rgba(239, 68, 68, 0.1)'}
+                  >
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
+                  </button>
+                )}
+              </div>
+              <input
+                id="resumeFile"
+                type="file"
+                accept="application/pdf"
+                ref={fileInputRef}
+                onChange={(e) => setResumeFile(e.target.files[0])}
+                style={{ display: 'none' }}
+              />
+            </div>
+
+            {/* Job Description (Optional) */}
+            <div>
+              <label htmlFor="jdText" className="form-label">Job Description (Optional)</label>
+              <textarea
+                id="jdText"
+                value={jdText}
+                onChange={(e) => setJdText(e.target.value)}
+                placeholder="Paste the Job Description here so the AI can match it with your resume..."
+                className="form-input"
+                rows="3"
+                style={{ resize: 'vertical' }}
+              />
+            </div>
+
 
             {/* Experience Level — card picker with SVG icons */}
             <div>

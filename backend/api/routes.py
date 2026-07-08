@@ -4,7 +4,11 @@ from core.state_store import get_session, save_session
 from graph.workflow import app as graph_app
 from graph.nodes import evaluate_answer_node, next_question_node, generate_final_report_node
 from services.audio import transcribe_audio, generate_tts
+from services.rag import process_and_store_context
 import uuid
+import tempfile
+import os
+import shutil
 
 router = APIRouter()
 
@@ -19,6 +23,28 @@ def _store_score(state: dict, score_entry: dict) -> None:
         
     scores[idx] = score_entry
     state["scores"] = scores
+
+
+@router.post("/upload-context")
+async def upload_context(
+    session_id: str = Form(...),
+    jd_text: str = Form(""),
+    resume_file: UploadFile = File(None)
+):
+    resume_path = ""
+    if resume_file:
+        temp_fd, resume_path = tempfile.mkstemp(suffix=".pdf")
+        os.close(temp_fd)
+        with open(resume_path, "wb") as buffer:
+            shutil.copyfileobj(resume_file.file, buffer)
+            
+    success = process_and_store_context(session_id, resume_path, jd_text)
+    
+    if resume_path and os.path.exists(resume_path):
+        os.remove(resume_path)
+        
+    return {"success": success, "message": "Context uploaded and processed" if success else "No context provided"}
+
 
 
 @router.post("/start-interview")

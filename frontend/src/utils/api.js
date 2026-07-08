@@ -4,6 +4,18 @@ const api = axios.create({
   baseURL: "http://localhost:8000/api",
 });
 
+export const uploadContext = async (sessionId, resumeFile, jdText) => {
+  const formData = new FormData();
+  formData.append("session_id", sessionId);
+  if (resumeFile) formData.append("resume_file", resumeFile);
+  if (jdText) formData.append("jd_text", jdText);
+
+  const { data } = await api.post("/upload-context", formData, {
+    headers: { "Content-Type": "multipart/form-data" },
+  });
+  return data;
+};
+
 export const startInterview = async (jobTitle, experienceLevel) => {
   const { data } = await api.post("/start-interview", {
     job_title: jobTitle,

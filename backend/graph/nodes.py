@@ -2,13 +2,17 @@ import json
 from .state import InterviewState
 from .prompts import QUESTION_GENERATION_PROMPT, EVALUATION_PROMPT, FINAL_REPORT_PROMPT
 from services.llm import get_llm
+from services.rag import get_rag_context
 from langchain_core.messages import HumanMessage
 
 def generate_questions_node(state: InterviewState) -> InterviewState:
     llm = get_llm()
+    rag_context = get_rag_context(state["session_id"])
+    
     prompt = QUESTION_GENERATION_PROMPT.format(
         job_title=state["job_title"],
-        experience_level=state.get("experience_level", "Mid-level")
+        experience_level=state.get("experience_level", "Mid-level"),
+        rag_context=rag_context if rag_context else "No context provided."
     )
     response = llm.invoke([HumanMessage(content=prompt)])
     
