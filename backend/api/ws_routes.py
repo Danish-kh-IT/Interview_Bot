@@ -318,6 +318,60 @@ async def websocket_interview(websocket: WebSocket, session_id: str):
             elif msg_type == "ping":
                 await websocket.send_text(json.dumps({"type": "pong"}))
 
+            # ── LOG PROCTORING VIOLATION ──
+            elif msg_type == "log_proctoring_violation":
+                state = get_session(session_id)
+                if state:
+                    violations = state.get("proctoring_violations", [])
+                    warning_count = data.get("warning_count", 0)
+                    reason = data.get("reason", "Tab switch or window focus lost")
+                    violations.append({
+                        "reason": reason,
+                        "warning_count": warning_count,
+                    })
+                    state["proctoring_violations"] = violations
+                    
+                    if warning_count >= 3 or data.get("is_disqualified"):
+                        state["is_disqualified"] = True
+                        state["disqualification_reason"] = reason
+                        state["interview_completed"] = True
+                        
+                        scores = state.get("scores", [])
+                        if scores:
+                            try:
+                                result = generate_final_report_node(state)
+                                report = result.get("final_report", {})
+                            except Exception:
+                                report = {
+                                    "overall_score": 0,
+                                    "overall_feedback": f"Disqualified due to security violation: {reason}",
+                                    "hiring_recommendation": "Reject",
+                                }
+                        else:
+                            report = {
+                                "overall_score": 0,
+                                "overall_feedback": f"Candidate was DISQUALIFIED & TERMINATED due to security violation: {reason}",
+                                "hiring_recommendation": "Reject",
+                                "question_scores": [],
+                                "questions_answered": 0,
+                                "total_questions": 10,
+                            }
+                        
+                        report["is_disqualified"] = True
+                        report["disqualification_reason"] = reason
+                        report["hiring_recommendation"] = "Reject"
+                        report["question_scores"] = scores
+                        report["questions_answered"] = len(scores)
+                        report["total_questions"] = 10
+                        
+                        state["final_report"] = report
+
+                    save_session(session_id, state)
+                    print(f"[Proctoring] Recorded violation for {session_id} (Warning {warning_count}): {reason}")
+
+
+
+
     except WebSocketDisconnect:
         print(f"[WS] Client disconnected: {session_id}")
     except Exception as e:

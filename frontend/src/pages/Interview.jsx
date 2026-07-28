@@ -8,6 +8,9 @@ import {
 import { InterviewSocket } from "../utils/socket";
 import AudioPlayer, { stopCurrentAudio } from "../components/AudioPlayer";
 import AudioRecorder from "../components/AudioRecorder";
+import { useProctoring } from "../utils/useProctoring";
+import ProctorModal from "../components/ProctorModal";
+
 
 /* ── Professional SVG Logo Mark (shared) ── */
 function LogoMark({ size = 28 }) {
@@ -565,7 +568,56 @@ export default function Interview({ sessionData, setSessionData }) {
 
   /* ── Phrase sets for repeat/end flow are now module-level constants ── */
 
+  /* ── Proctoring / Anti-cheating Hook ── */
+  const handleDisqualify = useCallback(
+    (reason) => {
+      console.warn("Disqualified due to proctoring violation:", reason);
+      socketRef.current?.sendRaw?.(
+        JSON.stringify({
+          type: "log_proctoring_violation",
+          warning_count: 3,
+          reason: reason,
+          is_disqualified: true,
+        })
+      );
+      setFlowPhaseSync("ending");
+      speak(
+        "Interview terminated due to anti-cheating policy violation.",
+        () => navigate("/result")
+      );
+    },
+    [navigate]
+  );
+
+
+  const handleViolation = useCallback((count, reason) => {
+    socketRef.current?.sendRaw?.(
+      JSON.stringify({
+        type: "log_proctoring_violation",
+        warning_count: count,
+        reason: reason,
+      })
+    );
+  }, []);
+
+  const {
+    warningCount,
+    maxWarnings,
+    showWarningModal,
+    latestReason,
+    isFullscreen,
+    enterFullscreen,
+    dismissModal,
+  } = useProctoring({
+    enabled: !isWelcomePhase && flowPhase !== "ending",
+    maxWarnings: 3,
+    onDisqualify: handleDisqualify,
+    onViolation: handleViolation,
+  });
+
+
   /* progress % */
+
   const qNum = sessionData?.question_number ?? 0;
   const progressPct = Math.round((qNum / 10) * 100);
 
@@ -1283,6 +1335,7 @@ export default function Interview({ sessionData, setSessionData }) {
 
   return (
     <div
+      className="no-select"
       style={{
         height: "100dvh",
         display: "flex",
@@ -1290,6 +1343,7 @@ export default function Interview({ sessionData, setSessionData }) {
         background: "var(--bg-base)",
       }}
     >
+
       {/* ── TOP BAR ── */}
       <header
         style={{
@@ -1306,7 +1360,11 @@ export default function Interview({ sessionData, setSessionData }) {
       >
         {/* Left: logo + status */}
         <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
-          <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+          <div
+            onClick={() => navigate('/')}
+            title="Go to Home"
+            style={{ display: "flex", alignItems: "center", gap: 10, cursor: "pointer" }}
+          >
             <LogoMark size={30} />
             <span
               style={{
@@ -1319,6 +1377,7 @@ export default function Interview({ sessionData, setSessionData }) {
               InterviewAI
             </span>
           </div>
+
 
           <div
             style={{ width: 1, height: 20, background: "var(--border-light)" }}
@@ -1730,6 +1789,18 @@ export default function Interview({ sessionData, setSessionData }) {
           />
         )}
       </div>
+
+      {/* Proctoring Warning Modal */}
+      <ProctorModal
+        show={showWarningModal}
+        warningCount={warningCount}
+        maxWarnings={maxWarnings}
+        reason={latestReason}
+        onDismiss={dismissModal}
+        onEnterFullscreen={enterFullscreen}
+        isFullscreen={isFullscreen}
+      />
     </div>
   );
 }
+

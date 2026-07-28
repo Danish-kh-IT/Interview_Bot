@@ -269,4 +269,37 @@ async def get_evaluation(session_id: str):
     state = get_session(session_id)
     if not state:
         raise HTTPException(status_code=404, detail="Session not found")
-    return state.get("final_report", {})
+    
+    report = state.get("final_report")
+    if not report:
+        # Construct report on the fly from current state if final_report wasn't generated yet
+        scores = state.get("scores", [])
+        if scores:
+            try:
+                result = generate_final_report_node(state)
+                report = result.get("final_report", {})
+            except Exception:
+                report = {}
+        else:
+            report = {}
+        
+        report["overall_score"] = report.get("overall_score", 0)
+        report["overall_feedback"] = report.get(
+            "overall_feedback",
+            "Disqualified / Terminated due to security proctoring violation."
+            if state.get("is_disqualified")
+            else "Interview ended early."
+        )
+        report["hiring_recommendation"] = "Reject" if state.get("is_disqualified") else report.get("hiring_recommendation", "Consider")
+        report["question_scores"] = scores
+        report["questions_answered"] = len(scores)
+        report["total_questions"] = 10
+        if state.get("is_disqualified"):
+            report["is_disqualified"] = True
+            report["disqualification_reason"] = state.get("disqualification_reason", "Tab switch or window focus lost")
+
+        state["final_report"] = report
+        save_session(session_id, state)
+
+    return report
+

@@ -553,6 +553,7 @@ export default function Result({ sessionData }) {
     </div>
   );
 
+
   const scores        = report.question_scores || [];
   const answeredCount = report.questions_answered ?? scores.length;
   const totalCount    = report.total_questions ?? 10;
@@ -600,10 +601,15 @@ export default function Result({ sessionData }) {
 
       {/* ── NAV ── */}
       <nav style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '16px 28px', borderBottom: '1px solid var(--border-subtle)', backdropFilter: 'blur(12px)', position: 'sticky', top: 0, zIndex: 50, background: 'rgba(2,8,23,0.90)' }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+        <div
+          onClick={() => navigate('/')}
+          title="Go to Home"
+          style={{ display: 'flex', alignItems: 'center', gap: 10, cursor: 'pointer' }}
+        >
           <LogoMark size={30} />
           <span style={{ fontFamily: "'Space Grotesk',sans-serif", fontWeight: 700, fontSize: '0.95rem', letterSpacing: '-0.01em' }}>InterviewAI</span>
         </div>
+
         <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
           <DownloadBtn size="sm" />
           <button onClick={() => navigate('/')} className="btn btn-ghost" style={{ fontSize: '0.85rem' }}>← New Interview</button>
@@ -612,8 +618,61 @@ export default function Result({ sessionData }) {
 
       <div style={{ maxWidth: 760, margin: '0 auto', padding: '48px 20px 0' }}>
 
+        {/* ── DISQUALIFICATION BANNER ── */}
+        {report?.is_disqualified && (
+          <div
+            className="animate-fade-in-up"
+            style={{
+              marginBottom: 32,
+              background: 'linear-gradient(135deg, rgba(239, 68, 68, 0.15) 0%, rgba(153, 27, 27, 0.25) 100%)',
+              border: '1px solid rgba(239, 68, 68, 0.4)',
+              borderRadius: '20px',
+              padding: '20px 24px',
+              display: 'flex',
+              alignItems: 'center',
+              gap: 18,
+              boxShadow: '0 10px 30px rgba(239, 68, 68, 0.15)',
+            }}
+          >
+            <div
+              style={{
+                width: 48,
+                height: 48,
+                borderRadius: '50%',
+                background: 'rgba(239, 68, 68, 0.2)',
+                border: '1px solid rgba(239, 68, 68, 0.5)',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                color: '#ef4444',
+                flexShrink: 0,
+              }}
+            >
+              <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                <circle cx="12" cy="12" r="10" />
+                <line x1="15" y1="9" x2="9" y2="15" />
+                <line x1="9" y1="9" x2="15" y2="15" />
+              </svg>
+            </div>
+            <div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
+                <span style={{ fontSize: '0.75rem', fontWeight: 800, color: '#ef4444', textTransform: 'uppercase', letterSpacing: '0.08em' }}>
+                  Interview Disqualified & Terminated
+                </span>
+              </div>
+              <p style={{ color: '#fca5a5', fontSize: '0.9rem', fontWeight: 600, margin: 0 }}>
+                Reason: {report.disqualification_reason || 'Multiple tab-switch or window-focus violations detected.'}
+              </p>
+              <p style={{ color: '#94a3b8', fontSize: '0.8rem', marginTop: 4, margin: 0 }}>
+                This evaluation report reflects responses recorded prior to disqualification. Recommendation set to Reject.
+              </p>
+            </div>
+          </div>
+        )}
+
         {/* ── HERO ── */}
         <div className="animate-fade-in-up" style={{ textAlign: 'center', marginBottom: 48 }}>
+
           <div style={{ marginBottom: 12, display: 'inline-block' }}>
             <span className="badge badge-indigo" style={{ fontSize: '0.8125rem', padding: '6px 16px' }}>📊 Interview Complete</span>
           </div>
